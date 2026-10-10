@@ -1,26 +1,230 @@
+
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f3f8f3;
+  --foreground: #173b29;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  font-family: Arial, Helvetica, sans-serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.register-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background:
+    radial-gradient(circle at top left, #e1f3d8, transparent 38%),
+    linear-gradient(135deg, #f5faf4, #edf5ef);
+}
+
+.register-card {
+  width: 100%;
+  max-width: 490px;
+  padding: 42px 40px;
+  background: #ffffff;
+  border: 1px solid #e4eee5;
+  border-radius: 24px;
+  box-shadow: 0 20px 60px rgba(24, 65, 40, 0.12);
+}
+
+.register-heading {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.register-logo {
+  font-size: 46px;
+  margin-bottom: 12px;
+}
+
+.register-heading h1 {
+  margin: 0 0 12px;
+  color: #14532d;
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.8px;
+}
+
+.register-heading p {
+  margin: 0;
+  color: #68776c;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.register-field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.register-field label {
+  color: #263c2e;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.register-field input {
+  width: 100%;
+  height: 52px;
+  padding: 0 15px;
+  border: 1px solid #d5e1d7;
+  border-radius: 11px;
+  outline: none;
+  background: #fbfdfb;
+  color: #173b29;
+  font-size: 15px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.register-field input::placeholder {
+  color: #9aa69d;
+}
+
+.register-field input:focus {
+  border-color: #19804a;
+  box-shadow: 0 0 0 4px rgba(25, 128, 74, 0.12);
+  background: #ffffff;
+}
+
+.register-password {
+  position: relative;
+}
+
+.register-password input {
+  padding-right: 75px;
+}
+
+.register-password button {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: #187344;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.register-button {
+  width: 100%;
+  min-height: 52px;
+  margin-top: 4px;
+  border: none;
+  border-radius: 11px;
+  background: #176b3a;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.register-button:hover {
+  background: #10552d;
+  transform: translateY(-1px);
+}
+
+.register-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.register-footer {
+  margin-top: 25px;
+  text-align: center;
+  color: #657168;
+  font-size: 14px;
+}
+
+.register-footer a {
+  color: #176b3a;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.register-footer a:hover {
+  text-decoration: underline;
+}
+
+.register-privacy {
+  margin-top: 20px;
+  text-align: center;
+  color: #8a978d;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.register-error {
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: #fff0f0;
+  color: #b42318;
+  font-size: 13px;
+}
+
+.register-success {
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: #eaf7ed;
+  color: #1b6b37;
+  font-size: 13px;
+}
+
+@media (max-width: 520px) {
+  .register-page {
+    padding: 24px 14px;
+  }
+
+  .register-card {
+    padding: 32px 22px;
+    border-radius: 18px;
+  }
+
+  .register-heading h1 {
+    font-size: 27px;
+  }
+}
+.register-field label {
+  display: block;
+  color: #263c2e;
+  font-size: 15px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.register-field input {
+  width: 100%;
+  font-size: 15px;
+  font-weight: 500;
 }
