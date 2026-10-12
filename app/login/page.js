@@ -46,6 +46,7 @@ export default function LoginPage({ mode = "login" }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [wait, setWait] = useState(0);
+  const [hint, setHint] = useState(false);
 
   const isRegister = flow === "register";
   const isReset = flow === "reset";
@@ -85,6 +86,7 @@ export default function LoginPage({ mode = "login" }) {
 
   async function submitForm(e) {
     e.preventDefault();
+    setHint(false);
     setError("");
     setMessage("");
 
@@ -138,6 +140,9 @@ export default function LoginPage({ mode = "login" }) {
       }
     } catch (err) {
       setError(friendly(err));
+      if (flow === "login" && (err.message || "").toLowerCase().includes("invalid login")) {
+        setHint(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -338,6 +343,25 @@ export default function LoginPage({ mode = "login" }) {
             )}
 
             {errorBox}
+
+            {hint && flow === "login" && (
+              <div className="au-ok" style={{ background: "#fbeccb", color: "#6b4600" }}>
+                {t("oldHint")}
+                <div style={{ marginTop: "6px" }}>
+                  <button
+                    type="button"
+                    className="au-link"
+                    onClick={() => {
+                      setFlow("reset");
+                      setHint(false);
+                      setError("");
+                    }}
+                  >
+                    {t("setPwBtn")}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <button type="submit" className="au-btn" disabled={loading}>
               {loading ? t("wait") : isReset ? t("sendCode") : isRegister ? t("createBtn") : t("loginBtn")}
