@@ -131,6 +131,21 @@ export default function FarmsPage() {
           </p>
         </div>
 
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          <a
+            href="/farm-advisor.html"
+            style={{
+              background: "#e5f7eb",
+              color: "#164c36",
+              padding: "10px 18px",
+              borderRadius: "8px",
+              fontWeight: "700",
+              textDecoration: "none",
+            }}
+          >
+            Farm Advisor
+          </a>
+
         <button
           onClick={logout}
           style={{
@@ -145,6 +160,7 @@ export default function FarmsPage() {
         >
           Logout
         </button>
+        </div>
       </header>
 
       {/* CONTENT */}
