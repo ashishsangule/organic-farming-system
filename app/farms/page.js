@@ -3,10 +3,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import Link from "next/link";
 import Advisory from "./Advisory";
+import { useLang, LangToggle, Records } from "@/lib/ui";
 
 export default function FarmsPage() {
   const router = useRouter();
+  const { lang, setLang, t } = useLang();
 
   const [farms, setFarms] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -80,7 +83,7 @@ export default function FarmsPage() {
     e.preventDefault();
 
     if (!form.name || !form.location || !form.area || !form.crop) {
-      alert("Please fill all farm details.");
+      alert(t("fillAll"));
       return;
     }
 
@@ -154,7 +157,7 @@ export default function FarmsPage() {
 
   async function deleteFarm(id) {
     const confirmDelete = window.confirm(
-      "Are you sure you want to delete this farm?"
+      t("confirmDelete")
     );
 
     if (!confirmDelete) return;
@@ -231,7 +234,7 @@ export default function FarmsPage() {
               fontSize: "25px",
             }}
           >
-            🌱 Organic Farming System
+            🌱 {t("appTitle")}
           </h1>
 
           <p
@@ -240,11 +243,12 @@ export default function FarmsPage() {
               opacity: 0.8,
             }}
           >
-            Farm Management
+            {t("farmMgmt")}
           </p>
         </div>
 
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+          <LangToggle lang={lang} setLang={setLang} />
         <button
           onClick={logout}
           style={{
@@ -257,7 +261,7 @@ export default function FarmsPage() {
             cursor: "pointer",
           }}
         >
-          Logout
+          {t("logout")}
         </button>
         </div>
       </header>
@@ -291,11 +295,11 @@ export default function FarmsPage() {
                 fontSize: "30px",
               }}
             >
-              My Farms
+              {t("myFarms")}
             </h2>
 
             <p style={{ color: "#666" }}>
-              Manage all your registered farms.
+              {t("manageAll")}
             </p>
           </div>
 
@@ -311,9 +315,23 @@ export default function FarmsPage() {
               cursor: "pointer",
             }}
           >
-            {showForm ? "Close Form" : "+ Add Farm"}
+            {showForm ? t("closeForm") : t("addFarm")}
           </button>
         </div>
+
+        <Records
+          t={t}
+          title={t("tasks")}
+          table="tasks"
+          doneKey="status"
+          fields={[
+            { key: "task_name", label: t("taskName"), required: true },
+            { key: "due_date", label: t("due"), type: "date" },
+            { key: "description", label: t("details") },
+          ]}
+          line={(r) => r.task_name}
+          sub={(r) => [r.due_date, r.description].filter(Boolean).join(" · ")}
+        />
 
         {/* ADD FARM FORM */}
 
@@ -329,7 +347,7 @@ export default function FarmsPage() {
             }}
           >
             <h3 style={{ color: "#164c36" }}>
-              Add New Farm
+              {t("addNewFarm")}
             </h3>
 
             <div
@@ -344,7 +362,7 @@ export default function FarmsPage() {
                 name="name"
                 value={form.name}
                 onChange={handleChange}
-                placeholder="Farm name"
+                placeholder={t("farmName")}
                 style={inputStyle}
               />
 
@@ -352,7 +370,7 @@ export default function FarmsPage() {
                 name="location"
                 value={form.location}
                 onChange={handleChange}
-                placeholder="Location"
+                placeholder={t("location")}
                 style={inputStyle}
               />
 
@@ -360,7 +378,7 @@ export default function FarmsPage() {
                 name="area"
                 value={form.area}
                 onChange={handleChange}
-                placeholder="Area e.g. 10 Acres"
+                placeholder={t("areaPh")}
                 style={inputStyle}
               />
 
@@ -368,7 +386,7 @@ export default function FarmsPage() {
                 name="crop"
                 value={form.crop}
                 onChange={handleChange}
-                placeholder="Crops, e.g. Tomato, Onion, Wheat"
+                placeholder={t("cropsPh")}
                 style={inputStyle}
               />
             </div>
@@ -387,7 +405,7 @@ export default function FarmsPage() {
                 cursor: "pointer",
               }}
             >
-              {saving ? "Saving..." : "Save Farm"}
+              {saving ? t("saving") : t("saveFarm")}
             </button>
           </form>
         )}
@@ -395,7 +413,7 @@ export default function FarmsPage() {
         {/* FARM CARDS */}
 
         {loading ? (
-          <p style={{ color: "#666" }}>Loading your farms...</p>
+          <p style={{ color: "#666" }}>{t("loading")}</p>
         ) : farms.length === 0 ? (
           <div
             style={{
@@ -408,10 +426,10 @@ export default function FarmsPage() {
           >
             <div style={{ fontSize: "50px" }}>🌾</div>
 
-            <h3>No Farms Added</h3>
+            <h3>{t("noFarms")}</h3>
 
             <p>
-              Click "Add Farm" to create your first farm.
+              {t("noFarmsHint")}
             </p>
           </div>
         ) : (
@@ -455,7 +473,7 @@ export default function FarmsPage() {
                       fontWeight: "700",
                     }}
                   >
-                    {farm.status}
+                    {t("active")}
                   </span>
                 </div>
 
@@ -469,17 +487,37 @@ export default function FarmsPage() {
                 </h3>
 
                 <p>
-                  📍 <strong>Location:</strong>{" "}
+                  📍 <strong>{t("locLbl")}</strong>{" "}
                   {farm.location}
                 </p>
 
                 <p>
-                  📐 <strong>Area:</strong> {farm.area}
+                  📐 <strong>{t("areaLbl")}</strong>{" "}
+                  {t("acresN").replace("{n}", farm.acres)}
                 </p>
 
                 <p>
-                  🌾 <strong>Crop:</strong> {farm.crop}
+                  🌾 <strong>{t("cropLbl")}</strong> {farm.crop}
                 </p>
+
+                <Link
+                  href={`/farms/${farm.id}`}
+                  style={{
+                    display: "block",
+                    boxSizing: "border-box",
+                    textAlign: "center",
+                    marginTop: "12px",
+                    padding: "10px",
+                    border: "1px solid #176b3a",
+                    background: "white",
+                    color: "#176b3a",
+                    borderRadius: "8px",
+                    fontWeight: "700",
+                    textDecoration: "none",
+                  }}
+                >
+                  {t("daily")}
+                </Link>
 
                 <button
                   onClick={() =>
@@ -497,11 +535,11 @@ export default function FarmsPage() {
                     fontWeight: "700",
                   }}
                 >
-                  {openId === farm.id ? "Hide Advisory" : "🌿 Farm Advisory"}
+                  {openId === farm.id ? t("hideAdvisory") : t("advisory")}
                 </button>
 
                 {openId === farm.id && (
-                  <Advisory crop={farm.crop} acres={farm.acres} />
+                  <Advisory crop={farm.crop} acres={farm.acres} t={t} />
                 )}
 
                 <button
@@ -518,7 +556,7 @@ export default function FarmsPage() {
                     fontWeight: "600",
                   }}
                 >
-                  Delete Farm
+                  {t("deleteFarm")}
                 </button>
               </div>
             ))}
