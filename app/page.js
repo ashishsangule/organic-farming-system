@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
 import { useLang, LangToggle } from "@/lib/ui";
 
 const css = `
@@ -39,12 +37,6 @@ const css = `
 
 export default function HomePage() {
   const { lang, setLang, t } = useLang();
-  const [loggedIn, setLoggedIn] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setLoggedIn(!!data.session));
-  }, []);
-
   const features = [
     ["🌾", "f1t", "f1d"],
     ["📋", "f2t", "f2d"],
@@ -60,11 +52,7 @@ export default function HomePage() {
     ["3", "s3t", "s3d"],
   ];
 
-  const buttons = loggedIn ? (
-    <Link href="/farms" className="lp-btn solid">
-      {t("ctaOpen")}
-    </Link>
-  ) : (
+  const buttons = (
     <>
       <Link href="/register" className="lp-btn solid">
         {t("ctaCreate")}
@@ -83,20 +71,12 @@ export default function HomePage() {
         <span className="lp-logo">🌱 {t("appTitle")}</span>
         <div className="lp-actions">
           <LangToggle lang={lang} setLang={setLang} />
-          {loggedIn ? (
-            <Link href="/farms" className="lp-btn solid">
-              {t("ctaOpen")}
-            </Link>
-          ) : (
-            <>
-              <Link href="/login" className="lp-btn">
-                {t("tabLogin")}
-              </Link>
-              <Link href="/register" className="lp-btn solid">
-                {t("tabCreate")}
-              </Link>
-            </>
-          )}
+          <Link href="/login" className="lp-btn">
+            {t("tabLogin")}
+          </Link>
+          <Link href="/register" className="lp-btn solid">
+            {t("tabCreate")}
+          </Link>
         </div>
       </nav>
 
@@ -105,7 +85,7 @@ export default function HomePage() {
         <h1>{t("heroTitle")}</h1>
         <p>{t("heroSub")}</p>
         <div className="lp-cta">{buttons}</div>
-        {!loggedIn && <div className="lp-note">{t("noPw")}</div>}
+        <div className="lp-note">{t("noPw")}</div>
       </header>
 
       <section className="lp-sec">
