@@ -1,30 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 export default function FarmsPage() {
   const router = useRouter();
 
-  const [farms, setFarms] = useState([
-    {
-      id: 1,
-      name: "Green Valley Farm",
-      location: "Satara, Maharashtra",
-      area: "10 Acres",
-      crop: "Organic Wheat",
-      status: "Active",
-    },
-    {
-      id: 2,
-      name: "Fresh Earth Farm",
-      location: "Pune, Maharashtra",
-      area: "7 Acres",
-      crop: "Organic Vegetables",
-      status: "Active",
-    },
-  ]);
+  const [farms, setFarms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
 
@@ -35,6 +20,50 @@ export default function FarmsPage() {
     crop: "",
   });
 
+  async function loadFarms() {
+    const { data, error } = await supabase
+      .from("farms")
+      .select("id, farm_name, location, total_area, fields(id, crops(crop_name))")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      alert("Could not load farms: " + error.message);
+      setLoading(false);
+      return;
+    }
+
+    setFarms(
+      (data || []).map((farm) => ({
+        id: farm.id,
+        name: farm.farm_name,
+        location: farm.location || "-",
+        area: `${farm.total_area ?? 0} Acres`,
+        crop:
+          (farm.fields || [])
+            .flatMap((field) => (field.crops || []).map((c) => c.crop_name))
+            .join(", ") || "-",
+        status: "Active",
+      }))
+    );
+
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    async function init() {
+      const { data } = await supabase.auth.getSession();
+
+      if (!data.session) {
+        router.replace("/login");
+        return;
+      }
+
+      loadFarms();
+    }
+
+    init();
+  }, []);
+
   function handleChange(e) {
     const { name, value } = e.target;
 
@@ -44,7 +73,7 @@ export default function FarmsPage() {
     }));
   }
 
-  function addFarm(e) {
+  async function addFarm(e) {
     e.preventDefault();
 
     if (!form.name || !form.location || !form.area || !form.crop) {
@@ -52,16 +81,62 @@ export default function FarmsPage() {
       return;
     }
 
-    const newFarm = {
-      id: Date.now(),
-      name: form.name,
-      location: form.location,
-      area: form.area,
-      crop: form.crop,
-      status: "Active",
-    };
+    setSaving(true);
 
-    setFarms((previous) => [newFarm, ...previous]);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData.session?.user;
+
+    if (!user) {
+      setSaving(false);
+      router.replace("/login");
+      return;
+    }
+
+    const area = parseFloat(form.area) || 0;
+
+    const { data: farm, error: farmError } = await supabase
+      .from("farms")
+      .insert({
+        user_id: user.id,
+        farm_name: form.name,
+        location: form.location,
+        total_area: area,
+      })
+      .select()
+      .single();
+
+    if (farmError) {
+      alert("Could not save farm: " + farmError.message);
+      setSaving(false);
+      return;
+    }
+
+    const { data: field, error: fieldError } = await supabase
+      .from("fields")
+      .insert({
+        user_id: user.id,
+        farm_id: farm.id,
+        field_name: "Main field",
+        area,
+      })
+      .select()
+      .single();
+
+    if (fieldError) {
+      alert("Farm saved, but the field could not be saved: " + fieldError.message);
+    } else {
+      const { error: cropError } = await supabase.from("crops").insert({
+        user_id: user.id,
+        field_id: field.id,
+        crop_name: form.crop,
+      });
+
+      if (cropError) {
+        alert("Farm saved, but the crop could not be saved: " + cropError.message);
+      }
+    }
+
+    await loadFarms();
 
     setForm({
       name: "",
@@ -71,18 +146,53 @@ export default function FarmsPage() {
     });
 
     setShowForm(false);
+    setSaving(false);
   }
 
-  function deleteFarm(id) {
+  async function deleteFarm(id) {
     const confirmDelete = window.confirm(
       "Are you sure you want to delete this farm?"
     );
 
     if (!confirmDelete) return;
 
-    setFarms((previous) =>
-      previous.filter((farm) => farm.id !== id)
-    );
+    const { data: fields } = await supabase
+      .from("fields")
+      .select("id")
+      .eq("farm_id", id);
+
+    const fieldIds = (fields || []).map((f) => f.id);
+
+    if (fieldIds.length > 0) {
+      const { error: cropsError } = await supabase
+        .from("crops")
+        .delete()
+        .in("field_id", fieldIds);
+
+      if (cropsError) {
+        alert("Could not delete farm: " + cropsError.message);
+        return;
+      }
+
+      const { error: fieldsError } = await supabase
+        .from("fields")
+        .delete()
+        .in("id", fieldIds);
+
+      if (fieldsError) {
+        alert("Could not delete farm: " + fieldsError.message);
+        return;
+      }
+    }
+
+    const { error } = await supabase.from("farms").delete().eq("id", id);
+
+    if (error) {
+      alert("Could not delete farm: " + error.message);
+      return;
+    }
+
+    setFarms((previous) => previous.filter((farm) => farm.id !== id));
   }
 
   async function logout() {
@@ -276,6 +386,7 @@ export default function FarmsPage() {
 
             <button
               type="submit"
+              disabled={saving}
               style={{
                 marginTop: "18px",
                 background: "#176b3a",
@@ -287,14 +398,16 @@ export default function FarmsPage() {
                 cursor: "pointer",
               }}
             >
-              Save Farm
+              {saving ? "Saving..." : "Save Farm"}
             </button>
           </form>
         )}
 
         {/* FARM CARDS */}
 
-        {farms.length === 0 ? (
+        {loading ? (
+          <p style={{ color: "#666" }}>Loading your farms...</p>
+        ) : farms.length === 0 ? (
           <div
             style={{
               background: "white",
