@@ -106,14 +106,14 @@ function range(lo, hi, unit, mult) {
   return lo === hi ? fmt(lo * mult, unit) : `${fmt(lo * mult, unit)} to ${fmt(hi * mult, unit)}`;
 }
 
-function quantity(p, acres) {
+function quantity(p, acres, t) {
   if (!acres) return null;
   if (p.perL) {
     const water = acres * WATER_PER_ACRE;
-    return `For your ${acres} acres (about ${water} L of water per spray): ${range(p.perL[0], p.perL[1], p.perL[2], water)}`;
+    return `${t("forAcres").replace("{a}", acres)} (${t("water").replace("{w}", water)}): ${range(p.perL[0], p.perL[1], p.perL[2], water)}`;
   }
   if (p.acre) {
-    return `For your ${acres} acres: ${range(p.acre[0], p.acre[1], p.acre[2], acres)}`;
+    return `${t("forAcres").replace("{a}", acres)}: ${range(p.acre[0], p.acre[1], p.acre[2], acres)}`;
   }
   return null;
 }
@@ -123,7 +123,7 @@ const pill = {
   limited: { background: "#fbeccb", color: "#8a5a00", label: "Ask certifier first" },
 };
 
-export default function Advisory({ crop, acres }) {
+export default function Advisory({ crop, acres, t = (k) => k }) {
   const text = (crop || "").toLowerCase();
   const matched = CROPS.filter((c) => c.k.some((k) => text.includes(k)));
 
@@ -139,9 +139,7 @@ export default function Advisory({ crop, acres }) {
       }}
     >
       {matched.length === 0 && (
-        <p style={{ margin: "0 0 10px" }}>
-          No advisory for "{crop}" yet. Try a crop name like Tomato, Onion, Wheat or Cotton.
-        </p>
+        <p style={{ margin: "0 0 10px" }}>{t("noAdvisory")}</p>
       )}
 
       {matched.map((c) => (
@@ -152,13 +150,13 @@ export default function Advisory({ crop, acres }) {
 
           {c.pests.map(([pest, ids, tip]) => (
             <div key={pest} style={{ marginBottom: "10px" }}>
-              <strong>Problem: {pest}</strong>
+              <strong>{t("problem")}: {pest}</strong>
 
-              {tip && <div style={{ color: "#555", margin: "2px 0" }}>Tip: {tip}</div>}
+              {tip && <div style={{ color: "#555", margin: "2px 0" }}>{t("tip")}: {tip}</div>}
 
               {ids.map((id) => {
                 const p = P[id];
-                const qty = quantity(p, acres);
+                const qty = quantity(p, acres, t);
                 return (
                   <div
                     key={id}
@@ -180,9 +178,9 @@ export default function Advisory({ crop, acres }) {
                         fontWeight: "700",
                       }}
                     >
-                      {pill[p.s].label}
+                      {t(p.s === "safe" ? "safe" : "ask")}
                     </span>
-                    <div>Dose: {p.dose}</div>
+                    <div>{t("dose")}: {p.dose}</div>
                     {qty && <div style={{ color: "#164c36" }}>{qty}</div>}
                   </div>
                 );
@@ -201,14 +199,12 @@ export default function Advisory({ crop, acres }) {
           marginBottom: "10px",
         }}
       >
-        <strong>Do NOT use (not allowed in organic farming):</strong>{" "}
+        <strong>{t("avoidTitle")}</strong>{" "}
         {AVOID.join(", ")}.
       </div>
 
       <p style={{ margin: 0, color: "#666", fontSize: "12px" }}>
-        General guidance only. Doses are typical values, so always follow the product label and
-        confirm with your certifier or the local Krishi Vigyan Kendra. Water per acre is assumed
-        at {WATER_PER_ACRE} L; use less for young plants. Test on a few plants first.
+        {t("disclaimer").replace("{w}", WATER_PER_ACRE)}
       </p>
     </div>
   );
