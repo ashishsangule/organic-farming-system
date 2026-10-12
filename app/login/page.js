@@ -1,190 +1,245 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { useLang, LangToggle } from "@/lib/ui";
 
-export default function LoginPage() {
+const COOLDOWN = 60;
+
+export default function LoginPage({ mode = "login" }) {
+  const isRegister = mode === "register";
   const router = useRouter();
+  const { lang, setLang, t } = useLang();
 
+  const [step, setStep] = useState("email"); // "email" or "code"
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
+  const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [wait, setWait] = useState(0);
 
-  async function handleLogin(e) {
-    e.preventDefault();
+  // Countdown before the code can be requested again
+  useEffect(() => {
+    if (wait <= 0) return;
+    const id = setTimeout(() => setWait((w) => w - 1), 1000);
+    return () => clearTimeout(id);
+  }, [wait]);
 
-    setError("");
+  // Already signed in: go straight to the farms page
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) router.replace("/farms");
+    });
+  }, []);
 
-    if (!email || !password) {
-      setError("Please enter email and password.");
-      return;
+  function friendly(err) {
+    const m = (err.message || "").toLowerCase();
+    if (err.status === 429 || m.includes("rate limit") || m.includes("too many") || m.includes("security purposes")) {
+      return t("rateLimit");
     }
+    if (m.includes("signups not allowed") || m.includes("not found")) return t("noAccount");
+    if (m.includes("expired") || m.includes("invalid")) return t("badCode");
+    return err.message || t("genericErr");
+  }
+
+  async function sendCode(e) {
+    if (e) e.preventDefault();
+    setError("");
+    setMessage("");
+
+    const mail = email.trim().toLowerCase();
+    if (!mail) return setError(t("enterEmail"));
+    if (isRegister && !name.trim()) return setError(t("enterName"));
+    if (wait > 0) return;
 
     try {
       setLoading(true);
 
-      const { error: loginError } =
-        await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+      const { error: err } = await supabase.auth.signInWithOtp({
+        email: mail,
+        options: {
+          shouldCreateUser: isRegister,
+          ...(isRegister ? { data: { full_name: name.trim() } } : {}),
+        },
+      });
 
-      if (loginError) {
-        throw loginError;
-      }
+      if (err) throw err;
 
-      router.push("/farms");
+      setEmail(mail);
+      setStep("code");
+      setCode("");
+      setWait(COOLDOWN);
+      setMessage(t("codeSent"));
     } catch (err) {
-      setError(err.message || "Login failed.");
+      setError(friendly(err));
     } finally {
       setLoading(false);
     }
   }
 
+  async function verify(e) {
+    e.preventDefault();
+    setError("");
+
+    const token = code.replace(/\s/g, "");
+    if (token.length < 6) return setError(t("enterCode"));
+
+    try {
+      setLoading(true);
+
+      const { error: err } = await supabase.auth.verifyOtp({
+        email,
+        token,
+        type: "email",
+      });
+
+      if (err) throw err;
+
+      router.replace("/farms");
+    } catch (err) {
+      setError(friendly(err));
+      setLoading(false);
+    }
+  }
+
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#f4f8f5",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "30px",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "450px",
-          background: "white",
-          borderRadius: "18px",
-          padding: "35px",
-          boxShadow: "0 10px 35px rgba(0,0,0,0.10)",
-        }}
-      >
-        <div style={{ textAlign: "center", marginBottom: "30px" }}>
-          <div style={{ fontSize: "48px" }}>🌾</div>
-
-          <h1
-            style={{
-              color: "#164c36",
-              margin: "10px 0",
-              fontSize: "30px",
-            }}
-          >
-            Welcome Back
-          </h1>
-
-          <p style={{ color: "#666" }}>
-            Login to your Organic Farming System
-          </p>
+    <main className="register-page">
+      <div className="register-card">
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: "14px" }}>
+          <div style={{ background: "#164c36", padding: "6px", borderRadius: "10px" }}>
+            <LangToggle lang={lang} setLang={setLang} />
+          </div>
         </div>
 
-        <form onSubmit={handleLogin}>
-          <label
-            style={{
-              display: "block",
-              marginBottom: "7px",
-              fontWeight: "600",
-            }}
-          >
-            Email
-          </label>
+        <div className="register-heading">
+          <div className="register-logo">🌱</div>
+          <h1>{isRegister ? t("createTitle") : t("loginTitle")}</h1>
+          <p>{isRegister ? t("subRegister") : t("subLogin")}</p>
+        </div>
 
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Enter your email"
-            style={inputStyle}
-          />
+        {step === "email" && (
+          <form onSubmit={sendCode}>
+            {isRegister && (
+              <div className="register-field">
+                <label htmlFor="name">{t("fullName")}</label>
+                <input
+                  id="name"
+                  type="text"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={t("fullNamePh")}
+                  className="register-input"
+                  required
+                />
+              </div>
+            )}
 
-          <label
-            style={{
-              display: "block",
-              marginBottom: "7px",
-              fontWeight: "600",
-            }}
-          >
-            Password
-          </label>
-
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            style={inputStyle}
-          />
-
-          {error && (
-            <div
-              style={{
-                background: "#ffe8e8",
-                color: "#c62828",
-                padding: "12px",
-                borderRadius: "8px",
-                marginBottom: "15px",
-                fontSize: "14px",
-              }}
-            >
-              {error}
+            <div className="register-field">
+              <label htmlFor="email">{t("email")}</label>
+              <input
+                id="email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="register-input"
+                required
+              />
             </div>
+
+            {error && (
+              <div className="register-alert register-error" role="alert">
+                {error}
+              </div>
+            )}
+
+            <button type="submit" className="register-submit" disabled={loading}>
+              {t("sendCode")}
+            </button>
+          </form>
+        )}
+
+        {step === "code" && (
+          <form onSubmit={verify}>
+            {message && (
+              <div className="register-alert register-success" role="status">
+                {message}
+              </div>
+            )}
+
+            <div className="register-field">
+              <label htmlFor="otp">
+                {t("otpLabel")} ({email})
+              </label>
+              <input
+                id="otp"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={10}
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
+                placeholder="123456"
+                className="register-input"
+                style={{ letterSpacing: "6px", textAlign: "center", fontSize: "22px" }}
+                autoFocus
+                required
+              />
+            </div>
+
+            {error && (
+              <div className="register-alert register-error" role="alert">
+                {error}
+              </div>
+            )}
+
+            <button type="submit" className="register-submit" disabled={loading}>
+              {t("verify")}
+            </button>
+
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "14px", gap: "10px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => sendCode()}
+                disabled={wait > 0 || loading}
+                style={{ background: "none", border: "none", color: "#176b3a", fontWeight: "700", cursor: wait > 0 ? "default" : "pointer", opacity: wait > 0 ? 0.6 : 1 }}
+              >
+                {wait > 0 ? t("resendIn").replace("{s}", wait) : t("resend")}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setStep("email");
+                  setError("");
+                  setMessage("");
+                }}
+                style={{ background: "none", border: "none", color: "#176b3a", fontWeight: "700", cursor: "pointer" }}
+              >
+                {t("changeEmail")}
+              </button>
+            </div>
+          </form>
+        )}
+
+        <div className="register-footer">
+          {isRegister ? (
+            <>
+              {t("haveAcc")} <Link href="/login">{t("signIn")}</Link>
+            </>
+          ) : (
+            <>
+              {t("newHere")} <Link href="/register">{t("createAcc")}</Link>
+            </>
           )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: "100%",
-              padding: "14px",
-              border: "none",
-              borderRadius: "10px",
-              background: loading ? "#8ab89e" : "#176b3a",
-              color: "white",
-              fontSize: "16px",
-              fontWeight: "700",
-              cursor: loading ? "not-allowed" : "pointer",
-            }}
-          >
-            {loading ? "Logging in..." : "Login"}
-          </button>
-        </form>
-
-        <p
-          style={{
-            textAlign: "center",
-            marginTop: "22px",
-            color: "#666",
-          }}
-        >
-          Don't have an account?{" "}
-          <Link
-            href="/register"
-            style={{
-              color: "#176b3a",
-              fontWeight: "700",
-              textDecoration: "none",
-            }}
-          >
-            Register
-          </Link>
-        </p>
+        </div>
       </div>
     </main>
   );
 }
-
-const inputStyle = {
-  width: "100%",
-  padding: "13px",
-  marginBottom: "18px",
-  border: "1px solid #d5ddd8",
-  borderRadius: "9px",
-  fontSize: "15px",
-  boxSizing: "border-box",
-};
