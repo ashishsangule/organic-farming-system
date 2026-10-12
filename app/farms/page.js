@@ -15,6 +15,8 @@ export default function FarmsPage() {
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [userName, setUserName] = useState("");
+  const [stats, setStats] = useState({ pending: 0, expenses: 0 });
 
   const [showForm, setShowForm] = useState(false);
 
@@ -55,6 +57,20 @@ export default function FarmsPage() {
     setLoading(false);
   }
 
+  async function loadStats() {
+    const { count } = await supabase
+      .from("tasks")
+      .select("id", { count: "exact", head: true })
+      .neq("status", "Done");
+
+    const { data } = await supabase.from("expenses").select("amount");
+
+    setStats({
+      pending: count || 0,
+      expenses: (data || []).reduce((a, r) => a + (Number(r.amount) || 0), 0),
+    });
+  }
+
   useEffect(() => {
     async function init() {
       const { data } = await supabase.auth.getSession();
@@ -64,7 +80,10 @@ export default function FarmsPage() {
         return;
       }
 
+      const meta = data.session.user.user_metadata || {};
+      setUserName(meta.full_name || "");
       loadFarms();
+      loadStats();
     }
 
     init();
@@ -317,6 +336,42 @@ export default function FarmsPage() {
           >
             {showForm ? t("closeForm") : t("addFarm")}
           </button>
+        </div>
+
+        <h2 style={{ margin: "0 0 16px", color: "#164c36", fontSize: "26px" }}>
+          {t("hello")}{userName ? ", " + userName : ""} 👋
+        </h2>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+            gap: "14px",
+            marginBottom: "28px",
+          }}
+        >
+          {[
+            ["🌾", t("statFarms"), farms.length],
+            ["📐", t("statAcres"), farms.reduce((a, f) => a + (f.acres || 0), 0)],
+            ["✅", t("statTasks"), stats.pending],
+            ["💰", t("statExpenses"), "₹" + stats.expenses.toLocaleString("en-IN")],
+          ].map(([icon, label, value]) => (
+            <div
+              key={label}
+              style={{
+                background: "white",
+                borderRadius: "14px",
+                padding: "18px",
+                boxShadow: "0 5px 18px rgba(0,0,0,0.07)",
+              }}
+            >
+              <div style={{ fontSize: "28px" }}>{icon}</div>
+              <div style={{ fontSize: "26px", fontWeight: "800", color: "#164c36" }}>
+                {value}
+              </div>
+              <div style={{ color: "#666", fontSize: "14px" }}>{label}</div>
+            </div>
+          ))}
         </div>
 
         <Records
