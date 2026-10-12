@@ -87,23 +87,6 @@ export default function HomePage() {
               Login
             </button>
           </Link>
-
-          <a href="/farm-advisor.html">
-            <button
-              style={{
-                padding: "14px 28px",
-                borderRadius: "10px",
-                border: "1px solid white",
-                background: "transparent",
-                color: "white",
-                fontSize: "16px",
-                fontWeight: "700",
-                cursor: "pointer",
-              }}
-            >
-              Farm Advisor
-            </button>
-          </a>
         </div>
       </div>
     </main>
