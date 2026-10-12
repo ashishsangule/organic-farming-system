@@ -19,17 +19,6 @@ const primary = { background: "#176b3a", color: "white", border: "none", padding
 const ghost = { background: "white", color: "#c62828", border: "1px solid #e05252", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", fontWeight: "600" };
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "10px" };
 
-function downloadCsv(name, rows, cols) {
-  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const csv = [cols.join(","), ...rows.map((r) => cols.map((c) => q(r[c])).join(","))].join("\n");
-  const url = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name + ".csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export default function FarmDetailPage() {
   const { id } = useParams();
   const router = useRouter();
@@ -192,13 +181,6 @@ export default function FarmDetailPage() {
     </div>
   );
 
-  const csvBtn = (name, rows, cols) =>
-    rows.length > 0 && (
-      <button onClick={() => downloadCsv(name, rows, cols)} style={{ ...ghost, color: "#176b3a", borderColor: "#176b3a", marginTop: "10px" }}>
-        {t("csv")}
-      </button>
-    );
-
   const field = (label, el) => (
     <label style={{ fontSize: "12px", color: "#666", display: "block" }}>
       {label}
@@ -275,7 +257,6 @@ export default function FarmDetailPage() {
                   {acts.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
                   {acts.map((a) => row(a.id, actLabel(a.activity), [a.activity_date, a.notes].filter(Boolean).join(" · "), () => del("activities", a.id)))}
                 </div>
-                {csvBtn("activities", acts, ["activity_date", "activity", "notes"])}
               </div>
             )}
 
@@ -316,7 +297,6 @@ export default function FarmDetailPage() {
                   {exps.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
                   {exps.map((r) => row(r.id, `${catLabel(r.category)} - ${money(r.amount)}`, [r.expense_date, r.notes].filter(Boolean).join(" · "), () => del("expenses", r.id)))}
                 </div>
-                {csvBtn("expenses", exps, ["expense_date", "category", "amount", "notes"])}
               </div>
             )}
 
@@ -347,7 +327,6 @@ export default function FarmDetailPage() {
                   {harv.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
                   {harv.map((h) => row(h.id, `🌾 ${h.quantity} ${h.unit}`, [cropName(h.crop_id), h.harvest_date].filter(Boolean).join(" · "), () => del("harvests", h.id)))}
                 </div>
-                {csvBtn("harvest", harv, ["harvest_date", "crop_id", "quantity", "unit"])}
               </div>
             )}
 
