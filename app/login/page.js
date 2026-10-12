@@ -19,7 +19,8 @@ const css = `
 .au-tab.on{background:#176b3a;color:#fff}
 .au-h{text-align:center;margin:0 0 6px;font-size:25px;color:#14392a}
 .au-sub{text-align:center;margin:0 0 8px;color:#5d6b57;font-size:15px;line-height:1.5}
-.au-label{display:block;font-weight:700;color:#14281d;margin:16px 0 6px;font-size:15px}
+.au-row{display:flex;justify-content:space-between;align-items:center;margin:16px 0 6px}
+.au-label{display:block;font-weight:700;color:#14281d;font-size:15px}
 .au-input{width:100%;box-sizing:border-box;padding:14px;font-size:17px;border:1.5px solid #cfdac9;border-radius:10px;background:#fafdf9;color:#14281d}
 .au-input:focus{outline:3px solid #8bd450;border-color:#176b3a}
 .au-btn{width:100%;margin-top:22px;padding:15px;border:0;border-radius:12px;background:#176b3a;color:#fff;font-size:18px;font-weight:800;cursor:pointer}
@@ -30,18 +31,24 @@ const css = `
 `;
 
 export default function LoginPage({ mode = "login" }) {
-  const isRegister = mode === "register";
   const router = useRouter();
   const { lang, setLang, t } = useLang();
 
-  const [step, setStep] = useState("email"); // "email" or "code"
+  const [flow, setFlow] = useState(mode); // "register" | "login" | "reset"
+  const [step, setStep] = useState("form"); // "form" | "code" | "newpass"
+  const [codeType, setCodeType] = useState("signup"); // "signup" | "email"
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [wait, setWait] = useState(0);
+
+  const isRegister = flow === "register";
+  const isReset = flow === "reset";
 
   useEffect(() => {
     if (wait <= 0) return;
@@ -49,6 +56,7 @@ export default function LoginPage({ mode = "login" }) {
     return () => clearTimeout(id);
   }, [wait]);
 
+  // Already signed in: go straight to the farms page
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) router.replace("/farms");
@@ -60,37 +68,96 @@ export default function LoginPage({ mode = "login" }) {
     if (err.status === 429 || m.includes("rate limit") || m.includes("too many") || m.includes("security purposes")) {
       return t("rateLimit");
     }
+    if (m.includes("invalid login")) return t("wrongCreds");
     if (m.includes("signups not allowed") || m.includes("not found")) return t("noAccount");
+    if (m.includes("password should be")) return t("shortPw");
     if (m.includes("expired") || m.includes("invalid")) return t("badCode");
     return err.message || t("genericErr");
   }
 
-  async function sendCode(e) {
-    if (e) e.preventDefault();
+  function toCodeStep(type, msg) {
+    setCodeType(type);
+    setStep("code");
+    setCode("");
+    setWait(COOLDOWN);
+    setMessage(msg);
+  }
+
+  async function submitForm(e) {
+    e.preventDefault();
     setError("");
     setMessage("");
 
     const mail = email.trim().toLowerCase();
     if (!mail) return setError(t("enterEmail"));
     if (isRegister && !name.trim()) return setError(t("enterName"));
-    if (wait > 0) return;
+    if (!isReset && !password) return setError(t("enterPw"));
+    if (isRegister && password.length < 6) return setError(t("shortPw"));
 
     try {
       setLoading(true);
-
-      const { error: err } = await supabase.auth.signInWithOtp({
-        email: mail,
-        options: {
-          shouldCreateUser: isRegister,
-          ...(isRegister ? { data: { full_name: name.trim() } } : {}),
-        },
-      });
-
-      if (err) throw err;
-
       setEmail(mail);
-      setStep("code");
-      setCode("");
+
+      if (isRegister) {
+        const { data, error: err } = await supabase.auth.signUp({
+          email: mail,
+          password,
+          options: { data: { full_name: name.trim() } },
+        });
+        if (err) throw err;
+
+        if (data.session) {
+          router.replace("/farms");
+          return;
+        }
+        if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          setError(t("haveAccount"));
+          return;
+        }
+        toCodeStep("signup", t("codeSent"));
+      } else if (isReset) {
+        const { error: err } = await supabase.auth.signInWithOtp({
+          email: mail,
+          options: { shouldCreateUser: false },
+        });
+        if (err) throw err;
+        toCodeStep("email", t("codeSent"));
+      } else {
+        const { error: err } = await supabase.auth.signInWithPassword({ email: mail, password });
+
+        if (err) {
+          if ((err.message || "").toLowerCase().includes("not confirmed")) {
+            await supabase.auth.resend({ type: "signup", email: mail });
+            toCodeStep("signup", t("needVerify"));
+            return;
+          }
+          throw err;
+        }
+        router.replace("/farms");
+        return;
+      }
+    } catch (err) {
+      setError(friendly(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resend() {
+    if (wait > 0) return;
+    setError("");
+    try {
+      setLoading(true);
+      if (codeType === "signup") {
+        const { error: err } = await supabase.auth.resend({ type: "signup", email });
+        if (err) throw err;
+      } else {
+        const { error: err } = await supabase.auth.signInWithOtp({
+          email,
+          options: { shouldCreateUser: false },
+        });
+        if (err) throw err;
+      }
       setWait(COOLDOWN);
       setMessage(t("codeSent"));
     } catch (err) {
@@ -109,21 +176,69 @@ export default function LoginPage({ mode = "login" }) {
 
     try {
       setLoading(true);
-
-      const { error: err } = await supabase.auth.verifyOtp({
-        email,
-        token,
-        type: "email",
-      });
-
+      const { error: err } = await supabase.auth.verifyOtp({ email, token, type: codeType });
       if (err) throw err;
 
+      if (isReset) {
+        setStep("newpass");
+        setPassword("");
+        setLoading(false);
+        return;
+      }
       router.replace("/farms");
     } catch (err) {
       setError(friendly(err));
       setLoading(false);
     }
   }
+
+  async function savePassword(e) {
+    e.preventDefault();
+    setError("");
+    if (password.length < 6) return setError(t("shortPw"));
+
+    try {
+      setLoading(true);
+      const { error: err } = await supabase.auth.updateUser({ password });
+      if (err) throw err;
+      router.replace("/farms");
+    } catch (err) {
+      setError(friendly(err));
+      setLoading(false);
+    }
+  }
+
+  const title = isReset ? t("resetTitle") : isRegister ? t("createTitle") : t("loginTitle");
+  const sub = isReset ? t("resetSub") : isRegister ? t("subRegister") : t("subLogin");
+
+  const passwordField = (
+    <>
+      <div className="au-row">
+        <label className="au-label" htmlFor="password">
+          {t("password")}
+        </label>
+        <button type="button" className="au-link" onClick={() => setShowPw(!showPw)}>
+          {showPw ? t("hide") : t("show")}
+        </button>
+      </div>
+      <input
+        id="password"
+        type={showPw ? "text" : "password"}
+        autoComplete={isRegister || step === "newpass" ? "new-password" : "current-password"}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder={t("passwordPh")}
+        className="au-input"
+        required
+      />
+    </>
+  );
+
+  const errorBox = error && (
+    <div className="au-err" role="alert">
+      {error}
+    </div>
+  );
 
   return (
     <main className="au-wrap">
@@ -139,25 +254,43 @@ export default function LoginPage({ mode = "login" }) {
           </div>
         </div>
 
-        <div className="au-tabs">
-          <Link href="/login" className={"au-tab" + (isRegister ? "" : " on")}>
-            {t("tabLogin")}
-          </Link>
-          <Link href="/register" className={"au-tab" + (isRegister ? " on" : "")}>
-            {t("tabCreate")}
-          </Link>
-        </div>
+        {isReset ? (
+          <button
+            type="button"
+            className="au-link"
+            style={{ marginBottom: "14px" }}
+            onClick={() => {
+              setFlow("login");
+              setStep("form");
+              setError("");
+              setMessage("");
+            }}
+          >
+            {t("backLogin")}
+          </button>
+        ) : (
+          <div className="au-tabs">
+            <Link href="/login" className={"au-tab" + (isRegister ? "" : " on")}>
+              {t("tabLogin")}
+            </Link>
+            <Link href="/register" className={"au-tab" + (isRegister ? " on" : "")}>
+              {t("tabCreate")}
+            </Link>
+          </div>
+        )}
 
-        <h1 className="au-h">{isRegister ? t("createTitle") : t("loginTitle")}</h1>
-        <p className="au-sub">{isRegister ? t("subRegister") : t("subLogin")}</p>
+        <h1 className="au-h">{title}</h1>
+        <p className="au-sub">{sub}</p>
 
-        {step === "email" && (
-          <form onSubmit={sendCode}>
+        {step === "form" && (
+          <form onSubmit={submitForm}>
             {isRegister && (
               <>
-                <label className="au-label" htmlFor="name">
-                  {t("fullName")}
-                </label>
+                <div className="au-row">
+                  <label className="au-label" htmlFor="name">
+                    {t("fullName")}
+                  </label>
+                </div>
                 <input
                   id="name"
                   type="text"
@@ -171,9 +304,11 @@ export default function LoginPage({ mode = "login" }) {
               </>
             )}
 
-            <label className="au-label" htmlFor="email">
-              {t("email")}
-            </label>
+            <div className="au-row">
+              <label className="au-label" htmlFor="email">
+                {t("email")}
+              </label>
+            </div>
             <input
               id="email"
               type="email"
@@ -185,14 +320,27 @@ export default function LoginPage({ mode = "login" }) {
               required
             />
 
-            {error && (
-              <div className="au-err" role="alert">
-                {error}
+            {!isReset && passwordField}
+
+            {flow === "login" && (
+              <div style={{ textAlign: "right", marginTop: "8px" }}>
+                <button
+                  type="button"
+                  className="au-link"
+                  onClick={() => {
+                    setFlow("reset");
+                    setError("");
+                  }}
+                >
+                  {t("forgot")}
+                </button>
               </div>
             )}
 
+            {errorBox}
+
             <button type="submit" className="au-btn" disabled={loading}>
-              {loading ? t("wait") : t("sendCode")}
+              {loading ? t("wait") : isReset ? t("sendCode") : isRegister ? t("createBtn") : t("loginBtn")}
             </button>
           </form>
         )}
@@ -205,9 +353,11 @@ export default function LoginPage({ mode = "login" }) {
               </div>
             )}
 
-            <label className="au-label" htmlFor="otp">
-              {t("otpLabel")} ({email})
-            </label>
+            <div className="au-row">
+              <label className="au-label" htmlFor="otp">
+                {t("otpLabel")} ({email})
+              </label>
+            </div>
             <input
               id="otp"
               type="text"
@@ -223,11 +373,7 @@ export default function LoginPage({ mode = "login" }) {
               required
             />
 
-            {error && (
-              <div className="au-err" role="alert">
-                {error}
-              </div>
-            )}
+            {errorBox}
 
             <button type="submit" className="au-btn" disabled={loading}>
               {loading ? t("wait") : t("verify")}
@@ -237,7 +383,7 @@ export default function LoginPage({ mode = "login" }) {
               <button
                 type="button"
                 className="au-link"
-                onClick={() => sendCode()}
+                onClick={resend}
                 disabled={wait > 0 || loading}
                 style={{ opacity: wait > 0 ? 0.6 : 1 }}
               >
@@ -248,7 +394,7 @@ export default function LoginPage({ mode = "login" }) {
                 type="button"
                 className="au-link"
                 onClick={() => {
-                  setStep("email");
+                  setStep("form");
                   setError("");
                   setMessage("");
                 }}
@@ -256,6 +402,19 @@ export default function LoginPage({ mode = "login" }) {
                 {t("changeEmail")}
               </button>
             </div>
+          </form>
+        )}
+
+        {step === "newpass" && (
+          <form onSubmit={savePassword}>
+            <p className="au-sub" style={{ marginTop: "14px", fontWeight: "700" }}>
+              {t("newPassword")}
+            </p>
+            {passwordField}
+            {errorBox}
+            <button type="submit" className="au-btn" disabled={loading}>
+              {loading ? t("wait") : t("savePassword")}
+            </button>
           </form>
         )}
       </div>
