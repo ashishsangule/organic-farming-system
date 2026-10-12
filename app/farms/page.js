@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import Advisory from "./Advisory";
 
 export default function FarmsPage() {
   const router = useRouter();
 
   const [farms, setFarms] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
@@ -38,6 +40,7 @@ export default function FarmsPage() {
         name: farm.farm_name,
         location: farm.location || "-",
         area: `${farm.total_area ?? 0} Acres`,
+        acres: Number(farm.total_area) || 0,
         crop:
           (farm.fields || [])
             .flatMap((field) => (field.crops || []).map((c) => c.crop_name))
@@ -242,20 +245,6 @@ export default function FarmsPage() {
         </div>
 
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-          <a
-            href="/farm-advisor.html"
-            style={{
-              background: "#e5f7eb",
-              color: "#164c36",
-              padding: "10px 18px",
-              borderRadius: "8px",
-              fontWeight: "700",
-              textDecoration: "none",
-            }}
-          >
-            Farm Advisor
-          </a>
-
         <button
           onClick={logout}
           style={{
@@ -379,7 +368,7 @@ export default function FarmsPage() {
                 name="crop"
                 value={form.crop}
                 onChange={handleChange}
-                placeholder="Main crop"
+                placeholder="Crops, e.g. Tomato, Onion, Wheat"
                 style={inputStyle}
               />
             </div>
@@ -491,6 +480,29 @@ export default function FarmsPage() {
                 <p>
                   🌾 <strong>Crop:</strong> {farm.crop}
                 </p>
+
+                <button
+                  onClick={() =>
+                    setOpenId(openId === farm.id ? null : farm.id)
+                  }
+                  style={{
+                    width: "100%",
+                    marginTop: "12px",
+                    padding: "10px",
+                    border: "none",
+                    background: "#176b3a",
+                    color: "white",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    fontWeight: "700",
+                  }}
+                >
+                  {openId === farm.id ? "Hide Advisory" : "🌿 Farm Advisory"}
+                </button>
+
+                {openId === farm.id && (
+                  <Advisory crop={farm.crop} acres={farm.acres} />
+                )}
 
                 <button
                   onClick={() => deleteFarm(farm.id)}
