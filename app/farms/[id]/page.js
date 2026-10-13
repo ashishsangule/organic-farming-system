@@ -34,7 +34,7 @@ export default function FarmDetailPage() {
   const [busy, setBusy] = useState(false);
   const [af, setAf] = useState({ type: "Watering", date: today(), notes: "" });
   const [ef, setEf] = useState({ category: "Seeds", amount: "", date: today(), notes: "" });
-  const [hf, setHf] = useState({ crop_id: "", quantity: "", unit: "kg", date: today() });
+  const [hf, setHf] = useState({ crop_id: "", quantity: "", unit: "kg", price: "", date: today() });
 
   const fields = farm ? farm.fields || [] : [];
   const crops = fields.flatMap((f) => (f.crops || []).map((c) => ({ ...c, field_id: f.id })));
@@ -137,7 +137,13 @@ export default function FarmDetailPage() {
     if (!(quantity > 0)) return alert(t("fillField") + " " + t("quantity"));
     save(
       "harvests",
-      { crop_id: Number(hf.crop_id), quantity, unit: hf.unit, harvest_date: hf.date || undefined },
+      {
+        crop_id: Number(hf.crop_id),
+        quantity,
+        unit: hf.unit,
+        price_per_unit: hf.price === "" ? undefined : Number(hf.price),
+        harvest_date: hf.date || undefined,
+      },
       () => setHf({ ...hf, quantity: "", date: today() })
     );
   }
@@ -145,6 +151,9 @@ export default function FarmDetailPage() {
   // ----- summaries -----
   const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
   const totalExp = sum(exps, "amount");
+  const saleOf = (h) => (Number(h.quantity) || 0) * (Number(h.price_per_unit) || 0);
+  const totalSales = harv.reduce((a, h) => a + saleOf(h), 0);
+  const profit = totalSales - totalExp;
   const monthExp = sum(exps.filter((r) => (r.expense_date || "").startsWith(monthKey)), "amount");
   const monthActs = acts.filter((r) => (r.activity_date || "").startsWith(monthKey)).length;
 
@@ -171,6 +180,13 @@ export default function FarmDetailPage() {
     return f ? f[1] + " " + t("c_" + c) : c;
   };
 
+  const salesByCrop = {};
+  harv.forEach((h) => {
+    const n = cropName(h.crop_id) || "-";
+    salesByCrop[n] = (salesByCrop[n] || 0) + saleOf(h);
+  });
+  const cropSales = Object.entries(salesByCrop).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+
   const row = (key, title, sub, onDel) => (
     <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", borderTop: "1px solid #e4ebe6", padding: "10px 0" }}>
       <div>
@@ -188,7 +204,7 @@ export default function FarmDetailPage() {
     </label>
   );
 
-  const tabs = [["act", "📋 " + t("activities")], ["exp", "💰 " + t("expenses")], ["harv", "🌾 " + t("harvest")], ["crops", "🌱 " + t("tabCrops")], ["adv", "🌿 " + t("tabAdvisory")]];
+  const tabs = [["act", "📋 " + t("activities")], ["exp", "💰 " + t("expenses")], ["harv", "🌾 " + t("harvest")], ["profit", "📊 " + t("tabProfit")], ["crops", "🌱 " + t("tabCrops")], ["adv", "🌿 " + t("tabAdvisory")]];
 
   return (
     <main style={{ minHeight: "100vh", background: "#f4f8f5" }}>
@@ -214,10 +230,12 @@ export default function FarmDetailPage() {
                 ["📅", t("thisMonthExp"), money(monthExp)],
                 ["📋", t("actThisMonth"), monthActs],
                 ["🌾", t("totalHarvest"), harvText],
-              ].map(([icon, label, value]) => (
+                ["💵", t("totalSales"), money(totalSales)],
+                [profit >= 0 ? "📈" : "📉", profit >= 0 ? t("netProfit") : t("netLoss"), money(Math.abs(profit)), profit >= 0 ? "#176b3a" : "#c62828"],
+              ].map(([icon, label, value, color]) => (
                 <div key={label} style={{ background: "white", borderRadius: "14px", padding: "16px", boxShadow: "0 5px 18px rgba(0,0,0,0.07)" }}>
                   <div style={{ fontSize: "26px" }}>{icon}</div>
-                  <div style={{ fontSize: "22px", fontWeight: "800", color: "#164c36" }}>{value}</div>
+                  <div style={{ fontSize: "22px", fontWeight: "800", color: color || "#164c36" }}>{value}</div>
                   <div style={{ color: "#666", fontSize: "13px" }}>{label}</div>
                 </div>
               ))}
@@ -318,6 +336,7 @@ export default function FarmDetailPage() {
                           {["kg", "quintal", "ton"].map((u) => <option key={u}>{u}</option>)}
                         </select>
                       ))}
+                      {field(t("pricePer"), <input type="number" min="0" step="any" style={inp} value={hf.price} onChange={(e) => setHf({ ...hf, price: e.target.value })} />)}
                       {field(t("date"), <input type="date" style={inp} value={hf.date} onChange={(e) => setHf({ ...hf, date: e.target.value })} />)}
                     </div>
                     <button type="submit" style={{ ...primary, marginTop: "12px" }} disabled={busy}>{t("add")}</button>
@@ -325,8 +344,46 @@ export default function FarmDetailPage() {
                 )}
                 <div style={{ marginTop: "12px" }}>
                   {harv.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
-                  {harv.map((h) => row(h.id, `🌾 ${h.quantity} ${h.unit}`, [cropName(h.crop_id), h.harvest_date].filter(Boolean).join(" · "), () => del("harvests", h.id)))}
+                  {harv.map((h) => row(h.id, `🌾 ${h.quantity} ${h.unit}` + (Number(h.price_per_unit) ? ` × ${money(h.price_per_unit)} = ${money(saleOf(h))}` : ""), [cropName(h.crop_id), h.harvest_date].filter(Boolean).join(" · "), () => del("harvests", h.id)))}
                 </div>
+              </div>
+            )}
+
+            {tab === "profit" && (
+              <div style={box}>
+                <div style={{ textAlign: "center", padding: "6px 0 20px" }}>
+                  <div style={{ color: "#666" }}>{t("profitLoss")}</div>
+                  <div style={{ fontSize: "38px", fontWeight: "800", color: profit >= 0 ? "#176b3a" : "#c62828" }}>
+                    {profit >= 0 ? "+" : "-"}{money(Math.abs(profit))}
+                  </div>
+                  {totalSales > 0 && (
+                    <div style={{ color: "#666" }}>{t("margin")}: {Math.round((profit / totalSales) * 100)}%</div>
+                  )}
+                </div>
+
+                {[[t("salesLbl"), totalSales, "#176b3a"], [t("expenses"), totalExp, "#e08a2e"]].map(([label, v, color]) => {
+                  const max = Math.max(totalSales, totalExp) || 1;
+                  return (
+                    <div key={label} style={{ marginBottom: "12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "14px" }}>
+                        <span>{label}</span>
+                        <span>{money(v)}</span>
+                      </div>
+                      <div style={{ background: "#eef3ea", borderRadius: "6px", height: "12px" }}>
+                        <div style={{ width: Math.max(2, (v / max) * 100) + "%", height: "12px", borderRadius: "6px", background: color }} />
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div style={{ fontWeight: "800", color: "#164c36", margin: "18px 0 6px" }}>{t("cropSales")}</div>
+                {cropSales.length === 0 && <p style={{ color: "#666" }}>{t("noSales")}</p>}
+                {cropSales.map(([n, v]) => (
+                  <div key={n} style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid #e4ebe6", padding: "9px 0" }}>
+                    <span>🌱 {n}</span>
+                    <strong>{money(v)}</strong>
+                  </div>
+                ))}
               </div>
             )}
 
