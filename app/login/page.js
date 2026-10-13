@@ -13,7 +13,6 @@ const css = `
 .au-card{width:100%;max-width:440px;background:#fff;border-radius:22px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.28)}
 .au-top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px}
 .au-home{color:#176b3a;font-weight:700;text-decoration:none}
-@media(max-width:768px){.au-home{visibility:hidden}}
 .au-lang{background:#164c36;padding:5px;border-radius:10px}
 .au-tabs{display:grid;grid-template-columns:1fr 1fr;background:#eef3ea;border-radius:12px;padding:5px;margin-bottom:22px}
 .au-tab{text-align:center;padding:13px 8px;border-radius:9px;font-weight:800;font-size:17px;text-decoration:none;color:#4f6356}
@@ -47,6 +46,7 @@ export default function LoginPage({ mode = "login" }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [wait, setWait] = useState(0);
+  const [keep, setKeep] = useState(false);
   const [hint, setHint] = useState(false);
 
   const isRegister = flow === "register";
@@ -85,8 +85,15 @@ export default function LoginPage({ mode = "login" }) {
     setMessage(msg);
   }
 
+  function rememberChoice() {
+    try {
+      localStorage.setItem("remember_me", keep ? "1" : "0");
+    } catch (e) {}
+  }
+
   async function submitForm(e) {
     e.preventDefault();
+    rememberChoice();
     setHint(false);
     setError("");
     setMessage("");
@@ -175,6 +182,7 @@ export default function LoginPage({ mode = "login" }) {
 
   async function verify(e) {
     e.preventDefault();
+    rememberChoice();
     setError("");
 
     const token = code.replace(/\s/g, "");
@@ -327,6 +335,13 @@ export default function LoginPage({ mode = "login" }) {
             />
 
             {!isReset && passwordField}
+
+            {flow === "login" && (
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "14px", fontSize: "15px", color: "#14281d" }}>
+                <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+                {t("keepSignedIn")}
+              </label>
+            )}
 
             {flow === "login" && (
               <div style={{ textAlign: "right", marginTop: "8px" }}>
