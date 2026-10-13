@@ -13,6 +13,7 @@ const css = `
 .au-card{width:100%;max-width:440px;background:#fff;border-radius:22px;padding:26px;box-shadow:0 20px 60px rgba(0,0,0,.28)}
 .au-top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:18px}
 .au-home{color:#176b3a;font-weight:700;text-decoration:none}
+@media(max-width:768px){.au-home{visibility:hidden}}
 .au-lang{background:#164c36;padding:5px;border-radius:10px}
 .au-tabs{display:grid;grid-template-columns:1fr 1fr;background:#eef3ea;border-radius:12px;padding:5px;margin-bottom:22px}
 .au-tab{text-align:center;padding:13px 8px;border-radius:9px;font-weight:800;font-size:17px;text-decoration:none;color:#4f6356}
