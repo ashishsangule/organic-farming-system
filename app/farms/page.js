@@ -16,7 +16,7 @@ export default function FarmsPage() {
   const [openId, setOpenId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [userName, setUserName] = useState("");
-  const [stats, setStats] = useState({ pending: 0, expenses: 0 });
+  const [stats, setStats] = useState({ pending: 0, expenses: 0, sales: 0 });
 
   const [showForm, setShowForm] = useState(false);
 
@@ -65,9 +65,12 @@ export default function FarmsPage() {
 
     const { data } = await supabase.from("expenses").select("amount");
 
+    const { data: hv } = await supabase.from("harvests").select("quantity, price_per_unit");
+
     setStats({
       pending: count || 0,
       expenses: (data || []).reduce((a, r) => a + (Number(r.amount) || 0), 0),
+      sales: (hv || []).reduce((a, r) => a + (Number(r.quantity) || 0) * (Number(r.price_per_unit) || 0), 0),
     });
   }
 
@@ -355,6 +358,11 @@ export default function FarmsPage() {
             ["📐", t("statAcres"), farms.reduce((a, f) => a + (f.acres || 0), 0)],
             ["✅", t("statTasks"), stats.pending],
             ["💰", t("statExpenses"), "₹" + stats.expenses.toLocaleString("en-IN")],
+            [
+              stats.sales - stats.expenses >= 0 ? "📈" : "📉",
+              stats.sales - stats.expenses >= 0 ? t("netProfit") : t("netLoss"),
+              "₹" + Math.abs(stats.sales - stats.expenses).toLocaleString("en-IN"),
+            ],
           ].map(([icon, label, value]) => (
             <div
               key={label}
