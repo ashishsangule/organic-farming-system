@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useLang, LangToggle } from "@/lib/ui";
-import Advisory from "../Advisory";
+import Advisory, { CropPicker } from "../Advisory";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -32,6 +32,8 @@ export default function FarmDetailPage() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("act");
   const [busy, setBusy] = useState(false);
+  const [newPicked, setNewPicked] = useState([]);
+  const [newOther, setNewOther] = useState("");
   const [af, setAf] = useState({ type: "Watering", date: today(), notes: "" });
   const [ef, setEf] = useState({ category: "Seeds", amount: "", date: today(), notes: "" });
   const [hf, setHf] = useState({ crop_id: "", quantity: "", unit: "kg", price: "", date: today() });
@@ -107,6 +109,27 @@ export default function FarmDetailPage() {
     const { error } = await supabase.from("crops").update(patch).eq("id", cropId);
     if (error) alert(error.message);
     else load();
+  }
+
+  async function addCrops() {
+    const list = [...newPicked, ...newOther.split(",").map((x) => x.trim()).filter(Boolean)].filter(
+      (n) => !crops.some((c) => c.crop_name === n)
+    );
+    if (!list.length || !fieldId) return;
+
+    setBusy(true);
+    const { error } = await supabase
+      .from("crops")
+      .insert(list.map((name) => ({ user_id: uid, field_id: fieldId, crop_name: name })));
+    setBusy(false);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setNewPicked([]);
+    setNewOther("");
+    await load();
   }
 
   function addAct(e) {
@@ -389,12 +412,23 @@ export default function FarmDetailPage() {
 
             {tab === "crops" && (
               <div>
+                {fieldId !== null && (
+                  <div style={box}>
+                    <CropPicker picked={newPicked} setPicked={setNewPicked} other={newOther} setOther={setNewOther} t={t} />
+                    <button type="button" style={{ ...primary, marginTop: "12px" }} disabled={busy} onClick={addCrops}>
+                      {t("addCrop")}
+                    </button>
+                  </div>
+                )}
                 {crops.length === 0 && <p style={{ color: "#666" }}>{t("noCropsYet")}</p>}
                 {crops.map((c) => {
                   const days = c.expected_harvest ? Math.ceil((new Date(c.expected_harvest) - new Date(today())) / 86400000) : null;
                   return (
                     <div key={c.id} style={box}>
-                      <h3 style={{ margin: "0 0 10px", color: "#164c36" }}>🌱 {c.crop_name}</h3>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                        <h3 style={{ margin: 0, color: "#164c36" }}>🌱 {c.crop_name}</h3>
+                        <button style={ghost} onClick={() => del("crops", c.id)}>{t("delCrop")}</button>
+                      </div>
                       <div style={grid}>
                         {field(t("planting"), <input type="date" style={inp} value={c.planting_date || ""} onChange={(e) => updateCrop(c.id, { planting_date: e.target.value || null })} />)}
                         {field(t("expHarvest"), <input type="date" style={inp} value={c.expected_harvest || ""} onChange={(e) => updateCrop(c.id, { expected_harvest: e.target.value || null })} />)}
