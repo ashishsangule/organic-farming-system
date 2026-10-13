@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
-import Advisory from "./Advisory";
+import Advisory, { CropPicker } from "./Advisory";
 import { useLang, LangToggle, Records } from "@/lib/ui";
 
 export default function FarmsPage() {
@@ -14,6 +14,8 @@ export default function FarmsPage() {
   const [farms, setFarms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
+  const [picked, setPicked] = useState([]);
+  const [otherCrop, setOtherCrop] = useState("");
   const [saving, setSaving] = useState(false);
   const [userName, setUserName] = useState("");
   const [stats, setStats] = useState({ pending: 0, expenses: 0, sales: 0 });
@@ -104,7 +106,12 @@ export default function FarmsPage() {
   async function addFarm(e) {
     e.preventDefault();
 
-    if (!form.name || !form.location || !form.area || !form.crop) {
+    const cropList = [
+      ...picked,
+      ...otherCrop.split(",").map((x) => x.trim()).filter(Boolean),
+    ];
+
+    if (!form.name || !form.location || !form.area || cropList.length === 0) {
       alert(t("fillAll"));
       return;
     }
@@ -153,11 +160,13 @@ export default function FarmsPage() {
     if (fieldError) {
       alert("Farm saved, but the field could not be saved: " + fieldError.message);
     } else {
-      const { error: cropError } = await supabase.from("crops").insert({
-        user_id: user.id,
-        field_id: field.id,
-        crop_name: form.crop,
-      });
+      const { error: cropError } = await supabase.from("crops").insert(
+        cropList.map((name) => ({
+          user_id: user.id,
+          field_id: field.id,
+          crop_name: name,
+        }))
+      );
 
       if (cropError) {
         alert("Farm saved, but the crop could not be saved: " + cropError.message);
@@ -173,6 +182,8 @@ export default function FarmsPage() {
       crop: "",
     });
 
+    setPicked([]);
+    setOtherCrop("");
     setShowForm(false);
     setSaving(false);
   }
@@ -445,13 +456,15 @@ export default function FarmsPage() {
                 style={inputStyle}
               />
 
-              <input
-                name="crop"
-                value={form.crop}
-                onChange={handleChange}
-                placeholder={t("cropsPh")}
-                style={inputStyle}
-              />
+              <div style={{ gridColumn: "1 / -1" }}>
+                <CropPicker
+                  picked={picked}
+                  setPicked={setPicked}
+                  other={otherCrop}
+                  setOther={setOtherCrop}
+                  t={t}
+                />
+              </div>
             </div>
 
             <button
