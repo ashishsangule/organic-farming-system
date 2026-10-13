@@ -1,9 +1,13 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 import { useLang, LangToggle } from "@/lib/ui";
 
 const css = `
+@media(max-width:768px){.lp{display:none}}
 .lp{font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#14281d;background:#f4f8f5;min-height:100vh}
 .lp a{text-decoration:none}
 .lp-nav{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 24px;background:#0f3d2e;color:#fff}
@@ -37,6 +41,16 @@ const css = `
 
 export default function HomePage() {
   const { lang, setLang, t } = useLang();
+  const router = useRouter();
+
+  // On phones, skip the landing page: go to farms if signed in, otherwise to login
+  useEffect(() => {
+    if (!window.matchMedia("(max-width: 768px)").matches) return;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => router.replace(data.session ? "/farms" : "/login"))
+      .catch(() => router.replace("/login"));
+  }, []);
   const features = [
     ["🌾", "f1t", "f1d"],
     ["📋", "f2t", "f2d"],
