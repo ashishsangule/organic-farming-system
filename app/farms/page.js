@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import Advisory, { CropPicker } from "./Advisory";
+import Weather from "./Weather";
 import { useLang, LangToggle, Records } from "@/lib/ui";
 
 export default function FarmsPage() {
@@ -14,6 +15,7 @@ export default function FarmsPage() {
   const [farms, setFarms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
+  const [taskView, setTaskView] = useState("all");
   const [picked, setPicked] = useState([]);
   const [otherCrop, setOtherCrop] = useState("");
   const [saving, setSaving] = useState(false);
@@ -57,6 +59,12 @@ export default function FarmsPage() {
     );
 
     setLoading(false);
+  }
+
+  function go(target) {
+    if (target === "tasks") setTaskView("pending");
+    const el = document.getElementById(target === "tasks" ? "tasks-section" : "farms-list");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function loadStats() {
@@ -377,11 +385,18 @@ export default function FarmsPage() {
           ].map(([icon, label, value]) => (
             <div
               key={label}
+              role="button"
+              tabIndex={0}
+              onClick={() => go(label === t("statTasks") ? "tasks" : "farms")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") go(label === t("statTasks") ? "tasks" : "farms");
+              }}
               style={{
                 background: "white",
                 borderRadius: "14px",
                 padding: "18px",
                 boxShadow: "0 5px 18px rgba(0,0,0,0.07)",
+                cursor: "pointer",
               }}
             >
               <div style={{ fontSize: "28px" }}>{icon}</div>
@@ -393,8 +408,29 @@ export default function FarmsPage() {
           ))}
         </div>
 
+        <div id="tasks-section" style={{ scrollMarginTop: "16px" }}>
+          <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+            {[["all", t("allLbl")], ["pending", t("pendingLbl")]].map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setTaskView(k)}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "999px",
+                  border: "1px solid #176b3a",
+                  cursor: "pointer",
+                  fontWeight: "700",
+                  background: taskView === k ? "#176b3a" : "white",
+                  color: taskView === k ? "white" : "#176b3a",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         <Records
           t={t}
+          filter={taskView === "pending" ? { col: "status", in: ["Pending"] } : undefined}
           title={t("tasks")}
           table="tasks"
           doneKey="status"
@@ -406,6 +442,7 @@ export default function FarmsPage() {
           line={(r) => r.task_name}
           sub={(r) => [r.due_date, r.description].filter(Boolean).join(" · ")}
         />
+        </div>
 
         {/* ADD FARM FORM */}
 
@@ -487,6 +524,8 @@ export default function FarmsPage() {
         )}
 
         {/* FARM CARDS */}
+
+        <div id="farms-list" style={{ scrollMarginTop: "16px" }} />
 
         {loading ? (
           <p style={{ color: "#666" }}>{t("loading")}</p>
@@ -575,6 +614,8 @@ export default function FarmsPage() {
                 <p>
                   🌾 <strong>{t("cropLbl")}</strong> {farm.crop}
                 </p>
+
+                <Weather place={farm.location} t={t} lang={lang} compact />
 
                 <Link
                   href={`/farms/${farm.id}`}
