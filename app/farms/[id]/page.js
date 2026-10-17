@@ -6,6 +6,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useLang, LangToggle } from "@/lib/ui";
 import Advisory, { CropPicker } from "../Advisory";
+import Weather from "../Weather";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -32,6 +33,11 @@ export default function FarmDetailPage() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("act");
   const [busy, setBusy] = useState(false);
+  const [editFarm, setEditFarm] = useState(false);
+  const [ff, setFf] = useState({ name: "", location: "", area: "" });
+  const [editAct, setEditAct] = useState(null);
+  const [editExp, setEditExp] = useState(null);
+  const [editHarv, setEditHarv] = useState(null);
   const [newPicked, setNewPicked] = useState([]);
   const [newOther, setNewOther] = useState("");
   const [af, setAf] = useState({ type: "Watering", date: today(), notes: "" });
@@ -111,6 +117,65 @@ export default function FarmDetailPage() {
     else load();
   }
 
+  function startEditFarm() {
+    setFf({ name: farm.farm_name || "", location: farm.location || "", area: String(farm.total_area ?? "") });
+    setEditFarm(true);
+  }
+
+  async function saveFarm(e) {
+    e.preventDefault();
+    if (!ff.name.trim()) return alert(t("fillField") + " " + t("farmName"));
+
+    setBusy(true);
+    const area = Number(ff.area) || 0;
+    const { error } = await supabase
+      .from("farms")
+      .update({ farm_name: ff.name.trim(), location: ff.location.trim() || null, total_area: area })
+      .eq("id", farm.id);
+
+    if (!error && fields.length === 1) {
+      await supabase.from("fields").update({ area }).eq("id", fields[0].id);
+    }
+    setBusy(false);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setEditFarm(false);
+    await load();
+  }
+
+  async function updateRow(table, rowId, patch, reset) {
+    setBusy(true);
+    const { error } = await supabase.from(table).update(patch).eq("id", rowId);
+    setBusy(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    reset();
+    await load();
+  }
+
+  function startEditAct(a) {
+    setAf({ type: a.activity || "Watering", date: a.activity_date || "", notes: a.notes || "" });
+    setEditAct(a.id);
+    setTab("act");
+  }
+
+  function startEditExp(r) {
+    setEf({ category: r.category || "Seeds", amount: String(r.amount ?? ""), date: r.expense_date || "", notes: r.notes || "" });
+    setEditExp(r.id);
+    setTab("exp");
+  }
+
+  function startEditHarv(h) {
+    setHf({ crop_id: String(h.crop_id), quantity: String(h.quantity ?? ""), unit: h.unit || "kg", price: h.price_per_unit == null ? "" : String(h.price_per_unit), date: h.harvest_date || "" });
+    setEditHarv(h.id);
+    setTab("harv");
+  }
+
   async function addCrops() {
     const list = [...newPicked, ...newOther.split(",").map((x) => x.trim()).filter(Boolean)].filter(
       (n) => !crops.some((c) => c.crop_name === n)
@@ -135,6 +200,18 @@ export default function FarmDetailPage() {
   function addAct(e) {
     e.preventDefault();
     if (!fieldId) return;
+    if (editAct) {
+      updateRow(
+        "activities",
+        editAct,
+        { activity: af.type, activity_date: af.date || null, notes: af.notes.trim() || null },
+        () => {
+          setEditAct(null);
+          setAf({ type: "Watering", date: today(), notes: "" });
+        }
+      );
+      return;
+    }
     save(
       "activities",
       { field_id: fieldId, activity: af.type, activity_date: af.date || undefined, notes: af.notes.trim() || undefined },
@@ -146,6 +223,18 @@ export default function FarmDetailPage() {
     e.preventDefault();
     const amount = Number(ef.amount);
     if (!(amount > 0)) return alert(t("fillField") + " " + t("amount"));
+    if (editExp) {
+      updateRow(
+        "expenses",
+        editExp,
+        { category: ef.category, amount, expense_date: ef.date || null, notes: ef.notes.trim() || null },
+        () => {
+          setEditExp(null);
+          setEf({ category: "Seeds", amount: "", date: today(), notes: "" });
+        }
+      );
+      return;
+    }
     save(
       "expenses",
       { farm_id: farm.id, category: ef.category, amount, expense_date: ef.date || undefined, notes: ef.notes.trim() || undefined },
@@ -158,6 +247,24 @@ export default function FarmDetailPage() {
     const quantity = Number(hf.quantity);
     if (!hf.crop_id) return alert(t("noCropsYet"));
     if (!(quantity > 0)) return alert(t("fillField") + " " + t("quantity"));
+    if (editHarv) {
+      updateRow(
+        "harvests",
+        editHarv,
+        {
+          crop_id: Number(hf.crop_id),
+          quantity,
+          unit: hf.unit,
+          price_per_unit: hf.price === "" ? null : Number(hf.price),
+          harvest_date: hf.date || null,
+        },
+        () => {
+          setEditHarv(null);
+          setHf({ ...hf, quantity: "", date: today() });
+        }
+      );
+      return;
+    }
     save(
       "harvests",
       {
@@ -210,13 +317,27 @@ export default function FarmDetailPage() {
   });
   const cropSales = Object.entries(salesByCrop).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
 
-  const row = (key, title, sub, onDel) => (
+  const row = (key, title, sub, onDel, onEdit) => (
     <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", borderTop: "1px solid #e4ebe6", padding: "10px 0" }}>
       <div>
         <div style={{ fontWeight: "600" }}>{title}</div>
         {sub && <div style={{ fontSize: "13px", color: "#666" }}>{sub}</div>}
       </div>
-      <button style={ghost} onClick={onDel}>{t("remove")}</button>
+      <div style={{ display: "flex", gap: "8px" }}>
+        {onEdit && (
+          <button style={{ ...ghost, color: "#333", borderColor: "#555" }} onClick={onEdit}>✏ {t("edit")}</button>
+        )}
+        <button style={ghost} onClick={onDel}>{t("remove")}</button>
+      </div>
+    </div>
+  );
+
+  const submitBtns = (editing, cancel) => (
+    <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+      <button type="submit" style={primary} disabled={busy}>{editing ? t("saveChanges") : t("add")}</button>
+      {editing && (
+        <button type="button" style={{ ...ghost, color: "#555", borderColor: "#999", padding: "10px 16px" }} onClick={cancel}>{t("cancel")}</button>
+      )}
     </div>
   );
 
@@ -247,6 +368,27 @@ export default function FarmDetailPage() {
               {crops.length ? " · 🌾 " + crops.map((c) => c.crop_name).join(", ") : ""}
             </p>
 
+            <button
+              onClick={startEditFarm}
+              style={{ ...primary, background: "white", color: "#176b3a", border: "1px solid #176b3a", padding: "8px 16px", marginBottom: "16px" }}
+            >
+              ✏ {t("editFarm")}
+            </button>
+
+            {editFarm && (
+              <form onSubmit={saveFarm} style={box}>
+                <div style={grid}>
+                  {field(t("farmName"), <input style={inp} value={ff.name} onChange={(e) => setFf({ ...ff, name: e.target.value })} />)}
+                  {field(t("location"), <input style={inp} value={ff.location} onChange={(e) => setFf({ ...ff, location: e.target.value })} />)}
+                  {field(t("areaAcres"), <input type="number" min="0" step="any" style={inp} value={ff.area} onChange={(e) => setFf({ ...ff, area: e.target.value })} />)}
+                </div>
+                <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                  <button type="submit" style={primary} disabled={busy}>{t("saveChanges")}</button>
+                  <button type="button" style={{ ...ghost, color: "#555", borderColor: "#999", padding: "10px 16px" }} onClick={() => setEditFarm(false)}>{t("cancel")}</button>
+                </div>
+              </form>
+            )}
+
             <div style={{ ...grid, marginBottom: "22px" }}>
               {[
                 ["💰", t("statExpenses"), money(totalExp)],
@@ -263,6 +405,8 @@ export default function FarmDetailPage() {
                 </div>
               ))}
             </div>
+
+            <Weather place={farm.location} t={t} lang={lang} />
 
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "18px" }}>
               {tabs.map(([k, label]) => (
@@ -292,11 +436,11 @@ export default function FarmDetailPage() {
                     {field(t("date"), <input type="date" style={inp} value={af.date} onChange={(e) => setAf({ ...af, date: e.target.value })} />)}
                     {field(t("notes"), <input style={inp} value={af.notes} onChange={(e) => setAf({ ...af, notes: e.target.value })} />)}
                   </div>
-                  <button type="submit" style={{ ...primary, marginTop: "12px" }} disabled={busy}>{t("add")}</button>
+                  {submitBtns(editAct, () => { setEditAct(null); setAf({ type: "Watering", date: today(), notes: "" }); })}
                 </form>
                 <div style={{ marginTop: "12px" }}>
                   {acts.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
-                  {acts.map((a) => row(a.id, actLabel(a.activity), [a.activity_date, a.notes].filter(Boolean).join(" · "), () => del("activities", a.id)))}
+                  {acts.map((a) => row(a.id, actLabel(a.activity), [a.activity_date, a.notes].filter(Boolean).join(" · "), () => del("activities", a.id), () => startEditAct(a)))}
                 </div>
               </div>
             )}
@@ -314,7 +458,7 @@ export default function FarmDetailPage() {
                     {field(t("date"), <input type="date" style={inp} value={ef.date} onChange={(e) => setEf({ ...ef, date: e.target.value })} />)}
                     {field(t("notes"), <input style={inp} value={ef.notes} onChange={(e) => setEf({ ...ef, notes: e.target.value })} />)}
                   </div>
-                  <button type="submit" style={{ ...primary, marginTop: "12px" }} disabled={busy}>{t("add")}</button>
+                  {submitBtns(editExp, () => { setEditExp(null); setEf({ category: "Seeds", amount: "", date: today(), notes: "" }); })}
                 </form>
 
                 {catRows.length > 0 && (
@@ -336,7 +480,7 @@ export default function FarmDetailPage() {
 
                 <div style={{ marginTop: "12px" }}>
                   {exps.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
-                  {exps.map((r) => row(r.id, `${catLabel(r.category)} - ${money(r.amount)}`, [r.expense_date, r.notes].filter(Boolean).join(" · "), () => del("expenses", r.id)))}
+                  {exps.map((r) => row(r.id, `${catLabel(r.category)} - ${money(r.amount)}`, [r.expense_date, r.notes].filter(Boolean).join(" · "), () => del("expenses", r.id), () => startEditExp(r)))}
                 </div>
               </div>
             )}
@@ -362,12 +506,12 @@ export default function FarmDetailPage() {
                       {field(t("pricePer"), <input type="number" min="0" step="any" style={inp} value={hf.price} onChange={(e) => setHf({ ...hf, price: e.target.value })} />)}
                       {field(t("date"), <input type="date" style={inp} value={hf.date} onChange={(e) => setHf({ ...hf, date: e.target.value })} />)}
                     </div>
-                    <button type="submit" style={{ ...primary, marginTop: "12px" }} disabled={busy}>{t("add")}</button>
+                    {submitBtns(editHarv, () => { setEditHarv(null); setHf({ ...hf, quantity: "", date: today() }); })}
                   </form>
                 )}
                 <div style={{ marginTop: "12px" }}>
                   {harv.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
-                  {harv.map((h) => row(h.id, `🌾 ${h.quantity} ${h.unit}` + (Number(h.price_per_unit) ? ` × ${money(h.price_per_unit)} = ${money(saleOf(h))}` : ""), [cropName(h.crop_id), h.harvest_date].filter(Boolean).join(" · "), () => del("harvests", h.id)))}
+                  {harv.map((h) => row(h.id, `🌾 ${h.quantity} ${h.unit}` + (Number(h.price_per_unit) ? ` × ${money(h.price_per_unit)} = ${money(saleOf(h))}` : ""), [cropName(h.crop_id), h.harvest_date].filter(Boolean).join(" · "), () => del("harvests", h.id), () => startEditHarv(h)))}
                 </div>
               </div>
             )}
@@ -430,6 +574,7 @@ export default function FarmDetailPage() {
                         <button style={ghost} onClick={() => del("crops", c.id)}>{t("delCrop")}</button>
                       </div>
                       <div style={grid}>
+                        {field(t("cropName"), <input key={c.id + c.crop_name} style={inp} defaultValue={c.crop_name} onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.crop_name) updateCrop(c.id, { crop_name: v }); }} />)}
                         {field(t("planting"), <input type="date" style={inp} value={c.planting_date || ""} onChange={(e) => updateCrop(c.id, { planting_date: e.target.value || null })} />)}
                         {field(t("expHarvest"), <input type="date" style={inp} value={c.expected_harvest || ""} onChange={(e) => updateCrop(c.id, { expected_harvest: e.target.value || null })} />)}
                         {field(t("statusLbl"), (
