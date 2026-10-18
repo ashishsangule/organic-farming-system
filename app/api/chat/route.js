@@ -65,8 +65,13 @@ export async function POST(request) {
 
   const context = typeof body.context === "string" ? body.context.slice(0, 3000) : "";
   const language = body.lang === "mr" ? "Marathi" : "English";
+  const voice = body.voice === true;
 
-  const system = `${RULES}\n\nApp language: ${language}\n\nFarmer's data:\n${context || "(no farms added yet)"}`;
+  const voiceRule = voice
+    ? "\n\nThe farmer is talking by voice and your answer will be read aloud. Answer in 3 to 5 short, natural spoken sentences. No lists, no symbols, no emojis."
+    : "";
+
+  const system = `${RULES}${voiceRule}\n\nApp language: ${language}\n\nFarmer's data:\n${context || "(no farms added yet)"}`;
 
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -76,7 +81,7 @@ export async function POST(request) {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({ model: MODEL, max_tokens: 1500, system, messages }),
+      body: JSON.stringify({ model: MODEL, max_tokens: voice ? 800 : 1500, system, messages }),
     });
 
     if (!r.ok) {
