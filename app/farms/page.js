@@ -7,6 +7,7 @@ import Link from "next/link";
 import Advisory, { CropPicker } from "./Advisory";
 import Weather from "./Weather";
 import TasksPanel from "./TasksPanel";
+import Chatbot from "./Chatbot";
 import { useLang, LangToggle, Records } from "@/lib/ui";
 
 export default function FarmsPage() {
@@ -673,6 +674,7 @@ export default function FarmsPage() {
           </div>
         )}
       </section>
+      <Chatbot t={t} lang={lang} />
     </main>
   );
 }
