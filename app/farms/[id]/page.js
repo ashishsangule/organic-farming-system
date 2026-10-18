@@ -28,6 +28,8 @@ export default function FarmDetailPage() {
   const [farm, setFarm] = useState(null);
   const [uid, setUid] = useState(null);
   const [acts, setActs] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [editTaskId, setEditTaskId] = useState(null);
   const [exps, setExps] = useState([]);
   const [harv, setHarv] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -62,7 +64,7 @@ export default function FarmDetailPage() {
     const fIds = (f.fields || []).map((x) => x.id);
     const cIds = (f.fields || []).flatMap((x) => (x.crops || []).map((c) => c.id));
 
-    const [a, e, h] = await Promise.all([
+    const [a, e, h, k] = await Promise.all([
       fIds.length
         ? supabase.from("activities").select("*").in("field_id", fIds).order("activity_date", { ascending: false }).order("created_at", { ascending: false })
         : { data: [] },
@@ -70,9 +72,11 @@ export default function FarmDetailPage() {
       cIds.length
         ? supabase.from("harvests").select("*").in("crop_id", cIds).order("harvest_date", { ascending: false }).order("created_at", { ascending: false })
         : { data: [] },
+      supabase.from("tasks").select("*").eq("farm_id", f.id),
     ]);
 
     setActs(a.data || []);
+    setTasks(k.data || []);
     setExps(e.data || []);
     setHarv(h.data || []);
     setHf((p) => (p.crop_id || !cIds.length ? p : { ...p, crop_id: String(cIds[0]) }));
@@ -158,9 +162,17 @@ export default function FarmDetailPage() {
     await load();
   }
 
+  function startEditTask(k) {
+    setAf({ type: k.task_name, date: k.due_date || "", notes: k.description || "", status: k.status === "Done" ? "done" : "todo" });
+    setEditTaskId(k.id);
+    setEditAct(null);
+    setTab("act");
+  }
+
   function startEditAct(a) {
     setAf({ type: a.activity || "Watering", date: a.activity_date || "", notes: a.notes || "" });
     setEditAct(a.id);
+    setEditTaskId(null);
     setTab("act");
   }
 
@@ -197,8 +209,33 @@ export default function FarmDetailPage() {
     await load();
   }
 
+  function resetAct() {
+    setEditAct(null);
+    setEditTaskId(null);
+    setAf({ type: "Watering", date: today(), notes: "", status: "done" });
+  }
+
   function addAct(e) {
     e.preventDefault();
+    const status = af.status || "done";
+
+    if (editTaskId) {
+      updateRow(
+        "tasks",
+        editTaskId,
+        { task_name: af.type, due_date: af.date || null, description: af.notes.trim() || null, status: status === "done" ? "Done" : "Pending" },
+        resetAct
+      );
+      return;
+    }
+    if (status === "todo" && !editAct) {
+      save(
+        "tasks",
+        { farm_id: farm.id, task_name: af.type, due_date: af.date || undefined, description: af.notes.trim() || undefined },
+        resetAct
+      );
+      return;
+    }
     if (!fieldId) return;
     if (editAct) {
       updateRow(
@@ -317,13 +354,19 @@ export default function FarmDetailPage() {
   });
   const cropSales = Object.entries(salesByCrop).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
 
-  const row = (key, title, sub, onDel, onEdit) => (
+  const workItems = [
+    ...acts.map((a) => ({ src: "act", id: a.id, raw: a, date: a.activity_date || "", done: true })),
+    ...tasks.map((k) => ({ src: "task", id: k.id, raw: k, date: k.due_date || "", done: k.status === "Done" })),
+  ].sort((a, b) => (a.done - b.done) || (a.done ? b.date.localeCompare(a.date) : (a.date || "9999").localeCompare(b.date || "9999")));
+
+  const row = (key, title, sub, onDel, onEdit, extra) => (
     <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px", flexWrap: "wrap", borderTop: "1px solid #e4ebe6", padding: "10px 0" }}>
       <div>
         <div style={{ fontWeight: "600" }}>{title}</div>
         {sub && <div style={{ fontSize: "13px", color: "#666" }}>{sub}</div>}
       </div>
       <div style={{ display: "flex", gap: "8px" }}>
+        {extra}
         {onEdit && (
           <button style={{ ...ghost, color: "#333", borderColor: "#555" }} onClick={onEdit}>✏ {t("edit")}</button>
         )}
@@ -428,19 +471,44 @@ export default function FarmDetailPage() {
               <div style={box}>
                 <form onSubmit={addAct}>
                   <div style={grid}>
+                    {field(t("statusLbl"), (
+                      <select style={inp} value={af.status || "done"} disabled={!!editAct} onChange={(e) => setAf({ ...af, status: e.target.value })}>
+                        <option value="done">{t("statusDone")}</option>
+                        <option value="todo">{t("statusTodo")}</option>
+                      </select>
+                    ))}
                     {field(t("typeLbl"), (
                       <select style={inp} value={af.type} onChange={(e) => setAf({ ...af, type: e.target.value })}>
+                        {!ACTS.some((x) => x[0] === af.type) && <option value={af.type}>{af.type}</option>}
                         {ACTS.map(([k, ic]) => <option key={k} value={k}>{ic} {t("a_" + k)}</option>)}
                       </select>
                     ))}
                     {field(t("date"), <input type="date" style={inp} value={af.date} onChange={(e) => setAf({ ...af, date: e.target.value })} />)}
                     {field(t("notes"), <input style={inp} value={af.notes} onChange={(e) => setAf({ ...af, notes: e.target.value })} />)}
                   </div>
-                  {submitBtns(editAct, () => { setEditAct(null); setAf({ type: "Watering", date: today(), notes: "" }); })}
+                  {submitBtns(editAct || editTaskId, resetAct)}
                 </form>
                 <div style={{ marginTop: "12px" }}>
-                  {acts.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
-                  {acts.map((a) => row(a.id, actLabel(a.activity), [a.activity_date, a.notes].filter(Boolean).join(" · "), () => del("activities", a.id), () => startEditAct(a)))}
+                  {workItems.length === 0 && <p style={{ color: "#666" }}>{t("none")}</p>}
+                  {workItems.map((w) =>
+                    w.src === "act"
+                      ? row("a" + w.id, "✔ " + actLabel(w.raw.activity), [w.raw.activity_date, w.raw.notes].filter(Boolean).join(" · "), () => del("activities", w.id), () => startEditAct(w.raw))
+                      : row(
+                          "t" + w.id,
+                          (w.done ? "✔ " : "⏳ ") + actLabel(w.raw.task_name),
+                          [w.raw.due_date, w.raw.description].filter(Boolean).join(" · "),
+                          () => del("tasks", w.id),
+                          () => startEditTask(w.raw),
+                          !w.done && (
+                            <button
+                              style={{ ...ghost, color: "#176b3a", borderColor: "#176b3a" }}
+                              onClick={() => updateRow("tasks", w.id, { status: "Done" }, () => {})}
+                            >
+                              {t("markDone")}
+                            </button>
+                          )
+                        )
+                  )}
                 </div>
               </div>
             )}
