@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useLang, LangToggle } from "@/lib/ui";
 import Advisory, { CropPicker } from "../Advisory";
 import Weather from "../Weather";
+import Chatbot from "../Chatbot";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -670,6 +671,7 @@ export default function FarmDetailPage() {
           </>
         )}
       </section>
+      <Chatbot t={t} lang={lang} />
     </main>
   );
 }
