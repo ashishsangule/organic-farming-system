@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import Advisory, { CropPicker } from "./Advisory";
 import Weather from "./Weather";
+import TasksPanel from "./TasksPanel";
 import { useLang, LangToggle, Records } from "@/lib/ui";
 
 export default function FarmsPage() {
@@ -428,19 +429,11 @@ export default function FarmsPage() {
               </button>
             ))}
           </div>
-        <Records
+        <TasksPanel
           t={t}
-          filter={taskView === "pending" ? { col: "status", in: ["Pending"] } : undefined}
-          title={t("tasks")}
-          table="tasks"
-          doneKey="status"
-          fields={[
-            { key: "task_name", label: t("taskName"), required: true },
-            { key: "due_date", label: t("due"), type: "date" },
-            { key: "description", label: t("details") },
-          ]}
-          line={(r) => r.task_name}
-          sub={(r) => [r.due_date, r.description].filter(Boolean).join(" · ")}
+          farms={farms.map((f) => ({ id: f.id, name: f.name }))}
+          view={taskView}
+          onChange={loadStats}
         />
         </div>
 
