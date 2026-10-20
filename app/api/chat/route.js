@@ -1,8 +1,52 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Set ANTHROPIC_API_KEY in Vercel (Project > Settings > Environment Variables).
-// Optional: CHAT_MODEL to use another Claude model (default is the cheapest one).
+// Set GEMINI_API_KEY (Google AI Studio) OR ANTHROPIC_API_KEY in Vercel
+// (Project > Settings > Environment Variables). If both are set, Gemini is used.
+// Optional: GEMINI_MODEL to pick a Gemini model, CHAT_MODEL to pick a Claude model.
 const MODEL = process.env.CHAT_MODEL || "claude-haiku-5-5";
+
+// If GEMINI_MODEL is not set, newer model names are tried first and older ones after a 404.
+const GEMINI_MODELS = process.env.GEMINI_MODEL
+  ? [process.env.GEMINI_MODEL]
+  : ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+let geminiWorking = null;
+
+async function askGemini(key, system, messages, maxTokens) {
+  const contents = messages.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }],
+  }));
+  const list = geminiWorking ? [geminiWorking] : GEMINI_MODELS;
+  let lastStatus = 502;
+
+  for (const model of list) {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents,
+        generationConfig: { maxOutputTokens: maxTokens },
+      }),
+    });
+
+    if (r.status === 404) {
+      geminiWorking = null;
+      lastStatus = 404;
+      continue; // this model name does not exist for this key, try the next one
+    }
+    if (!r.ok) {
+      console.error("Gemini API error", r.status, (await r.text()).slice(0, 400));
+      return { error: r.status };
+    }
+
+    const j = await r.json();
+    geminiWorking = model;
+    const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+    return { text: parts.map((p) => p.text || "").join("\n").trim() };
+  }
+  return { error: lastStatus };
+}
 
 // Simple best-effort limit: 30 questions per 10 minutes per user.
 const hits = new Map();
@@ -30,8 +74,9 @@ Rules:
 - Use the farmer's data below when it helps (crop names, acres, tasks). Do not invent data.`;
 
 export async function POST(request) {
+  const geminiKey = process.env.GEMINI_API_KEY;
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return Response.json({ error: "not_configured" }, { status: 503 });
+  if (!geminiKey && !apiKey) return Response.json({ error: "not_configured" }, { status: 503 });
 
   // Only signed-in users can use the assistant
   const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -73,6 +118,22 @@ export async function POST(request) {
 
   const system = `${RULES}${voiceRule}\n\nApp language: ${language}\n\nFarmer's data:\n${context || "(no farms added yet)"}`;
 
+  const empty =
+    body.lang === "mr"
+      ? "माफ करा, मला यावर उत्तर देता आले नाही. कृपया प्रश्न वेगळ्या शब्दांत विचारा."
+      : "Sorry, I could not answer that. Please rephrase your question.";
+
+  if (geminiKey) {
+    try {
+      const out = await askGemini(geminiKey, system, messages, voice ? 1024 : 2048);
+      if (out.error) return Response.json({ error: "upstream", status: out.error }, { status: 502 });
+      return Response.json({ reply: out.text || empty });
+    } catch (e) {
+      console.error("Chat route failed", e);
+      return Response.json({ error: "upstream" }, { status: 502 });
+    }
+  }
+
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -97,7 +158,7 @@ export async function POST(request) {
       .join("\n")
       .trim();
 
-    return Response.json({ reply: reply || "..." });
+    return Response.json({ reply: reply || empty });
   } catch (e) {
     console.error("Chat route failed", e);
     return Response.json({ error: "upstream" }, { status: 502 });
