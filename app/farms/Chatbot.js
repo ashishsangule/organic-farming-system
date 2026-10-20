@@ -190,7 +190,10 @@ export default function Chatbot({ t, lang }) {
       const token = s.session ? s.session.access_token : "";
       const ctx = await buildContext();
 
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 50000);
       const res = await fetch("/api/chat", {
+        signal: ctrl.signal,
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
         body: JSON.stringify({
@@ -201,16 +204,24 @@ export default function Chatbot({ t, lang }) {
         }),
       });
 
+      clearTimeout(timer);
       if (res.status === 503) throw new Error("botNotReady");
       if (res.status === 429) throw new Error("botBusy");
-      if (!res.ok) throw new Error("botError");
+      if (!res.ok) {
+        const info = await res.json().catch(() => ({}));
+        const err = new Error("botError");
+        err.detail = info.detail || "";
+        throw err;
+      }
 
       const j = await res.json();
       setMsgs([...next, { role: "assistant", content: j.reply }]);
       if (viaVoice || speakOn) speakText(j.reply);
     } catch (e) {
       const key = ["botNotReady", "botBusy"].includes(e.message) ? e.message : "botError";
-      setMsgs([...next, { role: "assistant", content: t(key), error: true }]);
+      const text =
+        e.name === "AbortError" ? t("botTimeout") : t(key) + (e.detail ? "\n\n(" + e.detail + ")" : "");
+      setMsgs([...next, { role: "assistant", content: text, error: true }]);
     } finally {
       setLoading(false);
     }
