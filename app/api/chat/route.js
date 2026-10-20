@@ -1,5 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 
+// Allow up to 60 seconds for the AI to answer
+export const maxDuration = 60;
+
 // Set GEMINI_API_KEY (Google AI Studio) OR ANTHROPIC_API_KEY in Vercel
 // (Project > Settings > Environment Variables). If both are set, Gemini is used.
 // Optional: GEMINI_MODEL to pick a Gemini model, CHAT_MODEL to pick a Claude model.
@@ -18,34 +21,50 @@ async function askGemini(key, system, messages, maxTokens) {
   }));
   const list = geminiWorking ? [geminiWorking] : GEMINI_MODELS;
   let lastStatus = 502;
+  let lastDetail = "";
 
-  for (const model of list) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+  const call = (model, lowThinking) => {
+    const generationConfig = { maxOutputTokens: maxTokens };
+    if (lowThinking) generationConfig.thinkingConfig = { thinkingLevel: "low" };
+    return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents,
-        generationConfig: { maxOutputTokens: maxTokens },
-      }),
+      body: JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents, generationConfig }),
+      signal: AbortSignal.timeout(40000),
     });
+  };
 
-    if (r.status === 404) {
-      geminiWorking = null;
-      lastStatus = 404;
-      continue; // this model name does not exist for this key, try the next one
-    }
-    if (!r.ok) {
-      console.error("Gemini API error", r.status, (await r.text()).slice(0, 400));
-      return { error: r.status };
-    }
+  for (const model of list) {
+    try {
+      let r = await call(model, true);
+      if (r.status === 400) r = await call(model, false); // this model may not accept the thinking setting
 
-    const j = await r.json();
-    geminiWorking = model;
-    const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
-    return { text: parts.map((p) => p.text || "").join("\n").trim() };
+      if (r.status === 404) {
+        geminiWorking = null;
+        lastStatus = 404;
+        lastDetail = "Model " + model + " not found";
+        continue; // try the next model name
+      }
+      if (!r.ok) {
+        const txt = await r.text();
+        let detail = txt.slice(0, 200);
+        try {
+          detail = JSON.parse(txt).error.message || detail;
+        } catch (e) {}
+        console.error("Gemini API error", r.status, model, detail);
+        return { error: r.status, detail: String(detail).slice(0, 200) };
+      }
+
+      const j = await r.json();
+      geminiWorking = model;
+      const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+      return { text: parts.map((p) => p.text || "").join("\n").trim() };
+    } catch (e) {
+      console.error("Gemini call failed", model, e && e.name);
+      return { error: 504, detail: e && e.name === "TimeoutError" ? "The AI took too long to answer." : "Could not reach the AI service." };
+    }
   }
-  return { error: lastStatus };
+  return { error: lastStatus, detail: lastDetail };
 }
 
 // Simple best-effort limit: 30 questions per 10 minutes per user.
@@ -72,6 +91,12 @@ Rules:
 - Do not claim to diagnose with certainty. Ask for the crop stage and symptoms when needed. For serious problems suggest the KVK or an agriculture officer.
 - You do not have live weather or market prices. For weather, tell the farmer to use the Weather section of the app.
 - Use the farmer's data below when it helps (crop names, acres, tasks). Do not invent data.`;
+
+// Open /api/chat in a browser to see whether a key is set (never shows the key itself)
+export async function GET() {
+  const provider = process.env.GEMINI_API_KEY ? "gemini" : process.env.ANTHROPIC_API_KEY ? "anthropic" : "none";
+  return Response.json({ configured: provider !== "none", provider });
+}
 
 export async function POST(request) {
   const geminiKey = process.env.GEMINI_API_KEY;
@@ -126,7 +151,7 @@ export async function POST(request) {
   if (geminiKey) {
     try {
       const out = await askGemini(geminiKey, system, messages, voice ? 1024 : 2048);
-      if (out.error) return Response.json({ error: "upstream", status: out.error }, { status: 502 });
+      if (out.error) return Response.json({ error: "upstream", status: out.error, detail: out.detail || "" }, { status: 502 });
       return Response.json({ reply: out.text || empty });
     } catch (e) {
       console.error("Chat route failed", e);
