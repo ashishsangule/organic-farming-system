@@ -184,11 +184,13 @@ export default function Chatbot({ t, lang }) {
     setMsgs(next);
     setInput("");
     setLoading(true);
+    const t0 = performance.now();
 
     try {
       const { data: s } = await supabase.auth.getSession();
       const token = s.session ? s.session.access_token : "";
       const ctx = await buildContext();
+      const prep = performance.now() - t0;
 
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 50000);
@@ -216,6 +218,7 @@ export default function Chatbot({ t, lang }) {
       }
 
       let reply = "";
+      let first = 0;
       const type = res.headers.get("content-type") || "";
 
       if (type.includes("application/json")) {
@@ -229,11 +232,16 @@ export default function Chatbot({ t, lang }) {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
+          if (!first) first = performance.now() - t0;
           reply += dec.decode(value, { stream: true });
           setLoading(false);
           setMsgs([...next, { role: "assistant", content: reply }]);
         }
       }
+
+      const sec = (ms) => (ms / 1000).toFixed(1) + "s";
+      const stats = `${res.headers.get("x-model") || "?"} · first word ${sec(first || performance.now() - t0)} · total ${sec(performance.now() - t0)} · prep ${sec(prep)} · server ${res.headers.get("x-pre-ms") || "?"}ms · AI start ${res.headers.get("x-gemini-ms") || "?"}ms`;
+      setMsgs([...next, { role: "assistant", content: reply, stats }]);
 
       if (reply && (viaVoice || speakOn)) speakText(reply);
     } catch (e) {
@@ -332,6 +340,7 @@ export default function Chatbot({ t, lang }) {
                         >
                           🔊 {t("botListen")}
                         </button>
+                        {m.stats && <div style={{ fontSize: "11px", color: "#8a8a8a", marginTop: "4px" }}>⚡ {m.stats}</div>}
                       </div>
                     )}
                   </div>
