@@ -8,35 +8,71 @@ export const maxDuration = 60;
 // Optional: GEMINI_MODEL to pick a Gemini model, CHAT_MODEL to pick a Claude model.
 const MODEL = process.env.CHAT_MODEL || "claude-haiku-5-5";
 
-// If GEMINI_MODEL is not set, the newest model is tried first. If a model does not exist (404),
-// is busy (429, 5xx) or is slow, the next model is tried too and the first good answer wins.
-const GEMINI_MODELS = process.env.GEMINI_MODEL
-  ? [process.env.GEMINI_MODEL]
-  : ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
-let geminiWorking = null;
+// Used only if the list of available models cannot be fetched
+const FALLBACK_MODELS = ["gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.8-flash"];
 
-const HEDGE_MS = 2500; // if a model has not started answering by then, also try the next one
+let modelCache = null;
+let modelCacheAt = 0;
+
+// Asks Google which Gemini models this key can use and puts the fastest first
+// (flash-lite models answer quickest, then normal flash models, newest versions first).
+async function discoverModels(key) {
+  if (process.env.GEMINI_MODEL) return [process.env.GEMINI_MODEL];
+  if (modelCache && Date.now() - modelCacheAt < 6 * 3600 * 1000) return modelCache;
+
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {
+      headers: { "x-goog-api-key": key },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const names = (j.models || [])
+        .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+        .map((m) => String(m.name).replace("models/", ""))
+        .filter((n) => /^gemini-[\d.]+-flash(-lite)?$/.test(n)); // plain text models, no preview/image/voice ones
+      const ver = (n) => parseFloat(n.match(/^gemini-([\d.]+)/)[1]);
+      const lite = names.filter((n) => n.endsWith("-lite")).sort((x, y) => ver(y) - ver(x));
+      const flash = names.filter((n) => !n.endsWith("-lite")).sort((x, y) => ver(y) - ver(x));
+      const list = [...lite.slice(0, 1), ...flash.slice(0, 1), ...lite.slice(1, 2), ...flash.slice(1, 3)];
+      if (list.length) {
+        modelCache = list;
+        modelCacheAt = Date.now();
+        return list;
+      }
+    }
+  } catch (e) {
+    console.error("Could not list Gemini models", e && e.name);
+  }
+  return FALLBACK_MODELS;
+}
+
+const HEDGE_MS = 1200; // if a model has not started answering by then, also start the next one
+const ATTEMPT_MS = 9000; // give up on one model if it has not started answering by then
 const RETRYABLE = [404, 429, 500, 502, 503, 504];
 
-function geminiBody(model, system, contents, maxTokens, quick) {
+// Different models accept different "keep thinking short" settings. The first one that works is remembered.
+const THINK_CFGS = [{ thinkingLevel: "minimal" }, { thinkingLevel: "low" }, { thinkingBudget: 0 }, null];
+const thinkChoice = {};
+let geminiWorking = null;
+
+function geminiBody(system, contents, maxTokens, think) {
   const generationConfig = { maxOutputTokens: maxTokens };
-  if (quick) {
-    // keep "thinking" short so the answer starts fast
-    generationConfig.thinkingConfig = model.startsWith("gemini-2.5") ? { thinkingBudget: 0 } : { thinkingLevel: "low" };
-  }
+  if (think) generationConfig.thinkingConfig = think;
   return JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents, generationConfig });
 }
 
-// Starts the models one after another (and a little overlapped when one is slow).
+// Starts the models one after another (a little overlapped when one is slow).
 // Resolves with the first successful streaming response, or with an error.
-function openGemini(key, system, messages, maxTokens) {
+function openGemini(key, models, system, messages, maxTokens) {
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
-  const order = geminiWorking
-    ? [geminiWorking, ...GEMINI_MODELS.filter((m) => m !== geminiWorking)]
-    : GEMINI_MODELS;
+  const order = geminiWorking && models.includes(geminiWorking)
+    ? [geminiWorking, ...models.filter((m) => m !== geminiWorking)]
+    : models;
+  const started = Date.now();
 
   return new Promise((resolve) => {
     let next = 0;
@@ -47,23 +83,17 @@ function openGemini(key, system, messages, maxTokens) {
     const ctrls = [];
     const timers = [];
 
-    const stopAll = (except) => {
-      timers.forEach(clearTimeout);
-      ctrls.forEach((c) => c !== except && c.abort());
-    };
     const finish = (value, except) => {
       if (done) return;
       done = true;
-      stopAll(except);
+      timers.forEach(clearTimeout);
+      ctrls.forEach((c) => c !== except && c.abort());
       resolve(value);
     };
 
-    const deadline = setTimeout(() => {
-      lastStatus = 504;
-      lastDetail = "The AI took too long to answer.";
-      finish({ error: lastStatus, detail: lastDetail });
-    }, 25000);
-    timers.push(deadline);
+    timers.push(
+      setTimeout(() => finish({ error: 504, detail: "The AI took too long to answer." }), 22000)
+    );
 
     const launch = () => {
       if (done) return;
@@ -76,32 +106,40 @@ function openGemini(key, system, messages, maxTokens) {
       pending++;
       const ctrl = new AbortController();
       ctrls.push(ctrl);
-      const hedge = setTimeout(launch, HEDGE_MS);
-      timers.push(hedge);
+      timers.push(setTimeout(launch, HEDGE_MS));
+      const giveUp = setTimeout(() => ctrl.abort(), ATTEMPT_MS);
+      timers.push(giveUp);
 
-      const request = (quick) =>
-        fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`, {
+      const attempt = async (idx) => {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-goog-api-key": key },
-          body: geminiBody(model, system, contents, maxTokens, quick),
+          body: geminiBody(system, contents, maxTokens, THINK_CFGS[idx]),
           signal: ctrl.signal,
         });
+        if (r.status === 400 && idx < THINK_CFGS.length - 1) {
+          const txt = await r.text();
+          if (/think/i.test(txt)) return attempt(idx + 1); // this model does not accept that setting
+          return new Response(txt, { status: 400 });
+        }
+        if (r.ok) thinkChoice[model] = idx;
+        return r;
+      };
 
       const failed = (status, detail) => {
-        clearTimeout(hedge);
+        clearTimeout(giveUp);
         pending--;
         lastStatus = status;
         lastDetail = detail;
         launch();
       };
 
-      request(true)
-        .then((r) => (r.status === 400 ? request(false) : r)) // this model may not accept the thinking setting
+      attempt(thinkChoice[model] || 0)
         .then(async (r) => {
           if (done) return;
           if (r.ok) {
             geminiWorking = model;
-            finish({ res: r, model }, ctrl);
+            finish({ res: r, model, ms: Date.now() - started }, ctrl);
             return;
           }
 
@@ -123,7 +161,7 @@ function openGemini(key, system, messages, maxTokens) {
         .catch((e) => {
           if (done) return;
           console.error("Gemini call failed", model, e && e.name);
-          failed(504, "Could not reach the AI service.");
+          failed(504, e && e.name === "AbortError" ? "A model was too slow." : "Could not reach the AI service.");
         });
     };
 
@@ -215,6 +253,7 @@ export async function GET() {
 }
 
 export async function POST(request) {
+  const t0 = Date.now();
   const geminiKey = process.env.GEMINI_API_KEY;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!geminiKey && !apiKey) return Response.json({ error: "not_configured" }, { status: 503 });
@@ -266,7 +305,9 @@ export async function POST(request) {
 
   if (geminiKey) {
     try {
-      const out = await openGemini(geminiKey, system, messages, voice ? 1024 : 2048);
+      const preMs = Date.now() - t0;
+      const models = await discoverModels(geminiKey);
+      const out = await openGemini(geminiKey, models, system, messages, voice ? 1024 : 2048);
       if (out.error) {
         return Response.json({ error: "upstream", status: out.error, detail: out.detail || "" }, { status: 502 });
       }
@@ -274,7 +315,13 @@ export async function POST(request) {
       const stream = textStream(out.res, empty);
       if (body.stream === true) {
         return new Response(stream, {
-          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store, no-transform" },
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store, no-transform",
+            "X-Model": out.model,
+            "X-Pre-Ms": String(preMs),
+            "X-Gemini-Ms": String(out.ms),
+          },
         });
       }
       return Response.json({ reply: (await new Response(stream).text()) || empty });
