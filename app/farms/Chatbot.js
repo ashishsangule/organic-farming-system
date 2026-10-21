@@ -201,6 +201,7 @@ export default function Chatbot({ t, lang }) {
           context: ctx,
           lang,
           voice: !!viaVoice,
+          stream: true,
         }),
       });
 
@@ -214,9 +215,27 @@ export default function Chatbot({ t, lang }) {
         throw err;
       }
 
-      const j = await res.json();
-      setMsgs([...next, { role: "assistant", content: j.reply }]);
-      if (viaVoice || speakOn) speakText(j.reply);
+      let reply = "";
+      const type = res.headers.get("content-type") || "";
+
+      if (type.includes("application/json")) {
+        const j = await res.json();
+        reply = j.reply || "";
+        setMsgs([...next, { role: "assistant", content: reply }]);
+      } else {
+        // The answer arrives in pieces: show it as it is written
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          reply += dec.decode(value, { stream: true });
+          setLoading(false);
+          setMsgs([...next, { role: "assistant", content: reply }]);
+        }
+      }
+
+      if (reply && (viaVoice || speakOn)) speakText(reply);
     } catch (e) {
       const key = ["botNotReady", "botBusy"].includes(e.message) ? e.message : "botError";
       const text =
