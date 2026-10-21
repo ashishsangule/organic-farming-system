@@ -8,10 +8,11 @@ export const maxDuration = 60;
 // Optional: GEMINI_MODEL to pick a Gemini model, CHAT_MODEL to pick a Claude model.
 const MODEL = process.env.CHAT_MODEL || "claude-haiku-5-5";
 
-// If GEMINI_MODEL is not set, newer model names are tried first and older ones after a 404.
+// If GEMINI_MODEL is not set, the newest model is tried first. If a model does not exist (404) or is
+// busy/overloaded (429, 5xx), the next model in the list is tried automatically.
 const GEMINI_MODELS = process.env.GEMINI_MODEL
   ? [process.env.GEMINI_MODEL]
-  : ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"];
+  : ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
 let geminiWorking = null;
 
 async function askGemini(key, system, messages, maxTokens) {
@@ -19,9 +20,11 @@ async function askGemini(key, system, messages, maxTokens) {
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
-  const list = geminiWorking ? [geminiWorking] : GEMINI_MODELS;
-  let lastStatus = 502;
-  let lastDetail = "";
+
+  // Try the model that worked last time first, then the others
+  const order = geminiWorking
+    ? [geminiWorking, ...GEMINI_MODELS.filter((m) => m !== geminiWorking)]
+    : GEMINI_MODELS;
 
   const call = (model, lowThinking) => {
     const generationConfig = { maxOutputTokens: maxTokens };
@@ -30,39 +33,49 @@ async function askGemini(key, system, messages, maxTokens) {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents, generationConfig }),
-      signal: AbortSignal.timeout(40000),
+      signal: AbortSignal.timeout(20000),
     });
   };
 
-  for (const model of list) {
-    try {
-      let r = await call(model, true);
-      if (r.status === 400) r = await call(model, false); // this model may not accept the thinking setting
+  let lastStatus = 502;
+  let lastDetail = "";
 
-      if (r.status === 404) {
-        geminiWorking = null;
-        lastStatus = 404;
-        lastDetail = "Model " + model + " not found";
-        continue; // try the next model name
-      }
-      if (!r.ok) {
+  for (let round = 0; round < 2; round++) {
+    for (const model of order) {
+      try {
+        let r = await call(model, true);
+        if (r.status === 400) r = await call(model, false); // this model may not accept the thinking setting
+
+        if (r.ok) {
+          const j = await r.json();
+          geminiWorking = model;
+          const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+          return { text: parts.map((p) => p.text || "").join("\n").trim() };
+        }
+
         const txt = await r.text();
         let detail = txt.slice(0, 200);
         try {
           detail = JSON.parse(txt).error.message || detail;
         } catch (e) {}
-        console.error("Gemini API error", r.status, model, detail);
-        return { error: r.status, detail: String(detail).slice(0, 200) };
-      }
+        lastStatus = r.status;
+        lastDetail = String(detail).slice(0, 200);
+        console.error("Gemini API error", r.status, model, lastDetail);
 
-      const j = await r.json();
-      geminiWorking = model;
-      const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
-      return { text: parts.map((p) => p.text || "").join("\n").trim() };
-    } catch (e) {
-      console.error("Gemini call failed", model, e && e.name);
-      return { error: 504, detail: e && e.name === "TimeoutError" ? "The AI took too long to answer." : "Could not reach the AI service." };
+        // Model missing or busy: try the next one. Anything else (bad key, bad request) will not improve.
+        if ([404, 429, 500, 502, 503, 504].includes(r.status)) {
+          if (model === geminiWorking) geminiWorking = null;
+          continue;
+        }
+        return { error: r.status, detail: lastDetail };
+      } catch (e) {
+        lastStatus = 504;
+        lastDetail = e && e.name === "TimeoutError" ? "The AI took too long to answer." : "Could not reach the AI service.";
+        console.error("Gemini call failed", model, e && e.name);
+      }
     }
+    if (lastStatus !== 503 && lastStatus !== 429 && lastStatus !== 504) break;
+    await new Promise((res) => setTimeout(res, 1200)); // short pause, then one more round
   }
   return { error: lastStatus, detail: lastDetail };
 }
