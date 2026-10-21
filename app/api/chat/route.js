@@ -8,76 +8,179 @@ export const maxDuration = 60;
 // Optional: GEMINI_MODEL to pick a Gemini model, CHAT_MODEL to pick a Claude model.
 const MODEL = process.env.CHAT_MODEL || "claude-haiku-5-5";
 
-// If GEMINI_MODEL is not set, the newest model is tried first. If a model does not exist (404) or is
-// busy/overloaded (429, 5xx), the next model in the list is tried automatically.
+// If GEMINI_MODEL is not set, the newest model is tried first. If a model does not exist (404),
+// is busy (429, 5xx) or is slow, the next model is tried too and the first good answer wins.
 const GEMINI_MODELS = process.env.GEMINI_MODEL
   ? [process.env.GEMINI_MODEL]
   : ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
 let geminiWorking = null;
 
-async function askGemini(key, system, messages, maxTokens) {
+const HEDGE_MS = 2500; // if a model has not started answering by then, also try the next one
+const RETRYABLE = [404, 429, 500, 502, 503, 504];
+
+function geminiBody(model, system, contents, maxTokens, quick) {
+  const generationConfig = { maxOutputTokens: maxTokens };
+  if (quick) {
+    // keep "thinking" short so the answer starts fast
+    generationConfig.thinkingConfig = model.startsWith("gemini-2.5") ? { thinkingBudget: 0 } : { thinkingLevel: "low" };
+  }
+  return JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents, generationConfig });
+}
+
+// Starts the models one after another (and a little overlapped when one is slow).
+// Resolves with the first successful streaming response, or with an error.
+function openGemini(key, system, messages, maxTokens) {
   const contents = messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
-
-  // Try the model that worked last time first, then the others
   const order = geminiWorking
     ? [geminiWorking, ...GEMINI_MODELS.filter((m) => m !== geminiWorking)]
     : GEMINI_MODELS;
 
-  const call = (model, lowThinking) => {
-    const generationConfig = { maxOutputTokens: maxTokens };
-    if (lowThinking) generationConfig.thinkingConfig = { thinkingLevel: "low" };
-    return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents, generationConfig }),
-      signal: AbortSignal.timeout(20000),
-    });
+  return new Promise((resolve) => {
+    let next = 0;
+    let pending = 0;
+    let done = false;
+    let lastStatus = 502;
+    let lastDetail = "";
+    const ctrls = [];
+    const timers = [];
+
+    const stopAll = (except) => {
+      timers.forEach(clearTimeout);
+      ctrls.forEach((c) => c !== except && c.abort());
+    };
+    const finish = (value, except) => {
+      if (done) return;
+      done = true;
+      stopAll(except);
+      resolve(value);
+    };
+
+    const deadline = setTimeout(() => {
+      lastStatus = 504;
+      lastDetail = "The AI took too long to answer.";
+      finish({ error: lastStatus, detail: lastDetail });
+    }, 25000);
+    timers.push(deadline);
+
+    const launch = () => {
+      if (done) return;
+      if (next >= order.length) {
+        if (pending === 0) finish({ error: lastStatus, detail: lastDetail });
+        return;
+      }
+
+      const model = order[next++];
+      pending++;
+      const ctrl = new AbortController();
+      ctrls.push(ctrl);
+      const hedge = setTimeout(launch, HEDGE_MS);
+      timers.push(hedge);
+
+      const request = (quick) =>
+        fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": key },
+          body: geminiBody(model, system, contents, maxTokens, quick),
+          signal: ctrl.signal,
+        });
+
+      const failed = (status, detail) => {
+        clearTimeout(hedge);
+        pending--;
+        lastStatus = status;
+        lastDetail = detail;
+        launch();
+      };
+
+      request(true)
+        .then((r) => (r.status === 400 ? request(false) : r)) // this model may not accept the thinking setting
+        .then(async (r) => {
+          if (done) return;
+          if (r.ok) {
+            geminiWorking = model;
+            finish({ res: r, model }, ctrl);
+            return;
+          }
+
+          const txt = await r.text();
+          let detail = txt.slice(0, 200);
+          try {
+            detail = JSON.parse(txt).error.message || detail;
+          } catch (e) {}
+          detail = String(detail).slice(0, 200);
+          console.error("Gemini API error", r.status, model, detail);
+
+          if (RETRYABLE.includes(r.status)) {
+            if (model === geminiWorking) geminiWorking = null;
+            failed(r.status, detail);
+          } else {
+            finish({ error: r.status, detail }); // bad key or bad request: other models will not help
+          }
+        })
+        .catch((e) => {
+          if (done) return;
+          console.error("Gemini call failed", model, e && e.name);
+          failed(504, "Could not reach the AI service.");
+        });
+    };
+
+    launch();
+  });
+}
+
+// Turns Gemini's event stream into plain text that the browser can show as it arrives
+function textStream(res, emptyText) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  const enc = new TextEncoder();
+  let buf = "";
+  let sent = false;
+
+  const extract = (line) => {
+    if (!line.startsWith("data:")) return "";
+    const raw = line.slice(5).trim();
+    if (!raw) return "";
+    try {
+      const j = JSON.parse(raw);
+      const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+      return parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("");
+    } catch (e) {
+      return "";
+    }
   };
 
-  let lastStatus = 502;
-  let lastDetail = "";
+  return new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      let out = "";
 
-  for (let round = 0; round < 2; round++) {
-    for (const model of order) {
-      try {
-        let r = await call(model, true);
-        if (r.status === 400) r = await call(model, false); // this model may not accept the thinking setting
-
-        if (r.ok) {
-          const j = await r.json();
-          geminiWorking = model;
-          const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
-          return { text: parts.map((p) => p.text || "").join("\n").trim() };
+      if (done) {
+        out = extract(buf.trim());
+        if (out) {
+          sent = true;
+          controller.enqueue(enc.encode(out));
         }
-
-        const txt = await r.text();
-        let detail = txt.slice(0, 200);
-        try {
-          detail = JSON.parse(txt).error.message || detail;
-        } catch (e) {}
-        lastStatus = r.status;
-        lastDetail = String(detail).slice(0, 200);
-        console.error("Gemini API error", r.status, model, lastDetail);
-
-        // Model missing or busy: try the next one. Anything else (bad key, bad request) will not improve.
-        if ([404, 429, 500, 502, 503, 504].includes(r.status)) {
-          if (model === geminiWorking) geminiWorking = null;
-          continue;
-        }
-        return { error: r.status, detail: lastDetail };
-      } catch (e) {
-        lastStatus = 504;
-        lastDetail = e && e.name === "TimeoutError" ? "The AI took too long to answer." : "Could not reach the AI service.";
-        console.error("Gemini call failed", model, e && e.name);
+        if (!sent) controller.enqueue(enc.encode(emptyText));
+        controller.close();
+        return;
       }
-    }
-    if (lastStatus !== 503 && lastStatus !== 429 && lastStatus !== 504) break;
-    await new Promise((res) => setTimeout(res, 1200)); // short pause, then one more round
-  }
-  return { error: lastStatus, detail: lastDetail };
+
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) out += extract(line.trim());
+      if (out) {
+        sent = true;
+        controller.enqueue(enc.encode(out));
+      }
+    },
+    cancel() {
+      reader.cancel();
+    },
+  });
 }
 
 // Simple best-effort limit: 30 questions per 10 minutes per user.
@@ -163,9 +266,18 @@ export async function POST(request) {
 
   if (geminiKey) {
     try {
-      const out = await askGemini(geminiKey, system, messages, voice ? 1024 : 2048);
-      if (out.error) return Response.json({ error: "upstream", status: out.error, detail: out.detail || "" }, { status: 502 });
-      return Response.json({ reply: out.text || empty });
+      const out = await openGemini(geminiKey, system, messages, voice ? 1024 : 2048);
+      if (out.error) {
+        return Response.json({ error: "upstream", status: out.error, detail: out.detail || "" }, { status: 502 });
+      }
+
+      const stream = textStream(out.res, empty);
+      if (body.stream === true) {
+        return new Response(stream, {
+          headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store, no-transform" },
+        });
+      }
+      return Response.json({ reply: (await new Response(stream).text()) || empty });
     } catch (e) {
       console.error("Chat route failed", e);
       return Response.json({ error: "upstream" }, { status: 502 });
