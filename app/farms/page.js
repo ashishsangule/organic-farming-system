@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import Advisory, { CropPicker } from "./Advisory";
 import Weather from "./Weather";
+import { baseName } from "@/lib/crops";
 import TasksPanel from "./TasksPanel";
 import Chatbot from "./Chatbot";
 import { useLang, LangToggle, Records } from "@/lib/ui";
@@ -116,13 +117,26 @@ export default function FarmsPage() {
   async function addFarm(e) {
     e.preventDefault();
 
+    const seenCrops = new Set();
     const cropList = [
       ...picked,
       ...otherCrop.split(",").map((x) => x.trim()).filter(Boolean),
-    ];
+    ].filter((n) => {
+      const k = baseName(n);
+      if (seenCrops.has(k)) return false;
+      seenCrops.add(k);
+      return true;
+    });
 
-    if (!form.name || !form.location || !form.area || cropList.length === 0) {
+    const cleanName = form.name.trim().replace(/\s+/g, " ");
+
+    if (!cleanName || !form.location || !form.area || cropList.length === 0) {
       alert(t("fillAll"));
+      return;
+    }
+
+    if (farms.some((f) => String(f.name).trim().toLowerCase() === cleanName.toLowerCase())) {
+      alert(t("farmExists"));
       return;
     }
 
@@ -143,7 +157,7 @@ export default function FarmsPage() {
       .from("farms")
       .insert({
         user_id: user.id,
-        farm_name: form.name,
+        farm_name: cleanName,
         location: form.location,
         total_area: area,
       })
@@ -151,7 +165,7 @@ export default function FarmsPage() {
       .single();
 
     if (farmError) {
-      alert("Could not save farm: " + farmError.message);
+      alert(farmError.code === "23505" ? t("farmExists") : "Could not save farm: " + farmError.message);
       setSaving(false);
       return;
     }
