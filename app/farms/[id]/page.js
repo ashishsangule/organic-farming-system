@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase";
 import { useLang, LangToggle } from "@/lib/ui";
 import Advisory, { CropPicker } from "../Advisory";
 import Weather from "../Weather";
+import { baseName } from "@/lib/crops";
 import Chatbot from "../Chatbot";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -135,7 +136,7 @@ export default function FarmDetailPage() {
     const area = Number(ff.area) || 0;
     const { error } = await supabase
       .from("farms")
-      .update({ farm_name: ff.name.trim(), location: ff.location.trim() || null, total_area: area })
+      .update({ farm_name: ff.name.trim().replace(/\s+/g, " "), location: ff.location.trim() || null, total_area: area })
       .eq("id", farm.id);
 
     if (!error && fields.length === 1) {
@@ -144,7 +145,7 @@ export default function FarmDetailPage() {
     setBusy(false);
 
     if (error) {
-      alert(error.message);
+      alert(error.code === "23505" ? t("farmExists") : error.message);
       return;
     }
     setEditFarm(false);
@@ -191,7 +192,7 @@ export default function FarmDetailPage() {
 
   async function addCrops() {
     const list = [...newPicked, ...newOther.split(",").map((x) => x.trim()).filter(Boolean)].filter(
-      (n) => !crops.some((c) => c.crop_name === n)
+      (n) => !crops.some((c) => baseName(c.crop_name) === baseName(n))
     );
     if (!list.length || !fieldId) return;
 
